@@ -131,7 +131,7 @@ static void usage(int status)
 	}
 
 	fprintf(out, "\nFor more detailed documentation, visit:\n"
-		"https://chromium.googlesource.com/chromiumos/platform/frecon/+/master\n");
+		"https://chromium.googlesource.com/chromiumos/platform/frecon/+/main\n");
 
 	exit(status);
 }

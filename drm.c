@@ -273,6 +273,81 @@ static int find_panel_orientation(drm_t *drm)
 	return 0;
 }
 
+typedef struct {
+	uint16_t tile_width;
+	uint16_t tile_height;
+} tile_property_t;
+
+static tile_property_t drm_get_tile_property(drm_t* drm)
+{
+	tile_property_t tile_property = {.tile_width = 0, .tile_height = 0};
+	drmModeConnector *console_connector;
+	console_connector = drmModeGetConnector(drm->fd, drm->console_connector_id);
+
+	if (!console_connector)
+		return tile_property;
+
+	for (int i = 0; i < console_connector->count_props; i++) {
+		drmModePropertyPtr prop;
+		drmModePropertyBlobPtr blob_ptr;
+		prop = drmModeGetProperty(drm->fd, console_connector->props[i]);
+		if (!prop)
+			continue;
+
+		if (strcmp(prop->name, "TILE") != 0) {
+			drmModeFreeProperty(prop);
+			continue;
+		}
+
+		blob_ptr = drmModeGetPropertyBlob(drm->fd,
+											console_connector->prop_values[i]);
+		if (!blob_ptr) {
+			drmModeFreeProperty(prop);
+			continue;
+		}
+
+		if (blob_ptr->length == 0) {
+			drmModeFreePropertyBlob(blob_ptr);
+			drmModeFreeProperty(prop);
+			continue;
+		}
+
+		char tile_str[blob_ptr->length];
+		memcpy(tile_str, blob_ptr->data, blob_ptr->length);
+
+		// Tile property blob is encoded as:
+		// "group_id:tile_is_single_monitor:num_h_tile:num_v_tile:tile_h_loc:
+		// tile_v_loc:tile_h_size:tile_v_size"
+		char *token = strtok(tile_str, ":");
+		int index = 0;
+		while (token || index < 8) {
+			// tile_h_size
+			if (index == 6) {
+				tile_property.tile_width = strtoul(token, NULL, 10);
+			}
+			// tile_v_size
+			else if (index == 7) {
+				tile_property.tile_height = strtoul(token, NULL, 10);
+			}
+			token = strtok(NULL, ":");
+			++index;
+		}
+
+		drmModeFreePropertyBlob(blob_ptr);
+		drmModeFreeProperty(prop);
+		break;
+	}
+
+	drmModeFreeConnector(console_connector);
+
+	return tile_property;
+}
+
+static bool is_tile_mode(drmModeModeInfoPtr mode, tile_property_t tile_property)
+{
+	return mode->hdisplay == tile_property.tile_width &&
+		   mode->vdisplay == tile_property.tile_height;
+}
 
 static bool find_main_monitor(drm_t* drm)
 {
@@ -310,14 +385,29 @@ static bool find_main_monitor(drm_t* drm)
 	drm->console_mmWidth = main_monitor_connector->mmWidth;
 	drm->console_mmHeight = main_monitor_connector->mmHeight;
 
+	tile_property_t tile_property = drm_get_tile_property(drm);
+
 	for (modes = 0; modes < main_monitor_connector->count_modes; modes++) {
 		if (main_monitor_connector->modes[modes].type &
-				DRM_MODE_TYPE_PREFERRED) {
+				DRM_MODE_TYPE_PREFERRED &&
+			!is_tile_mode(&main_monitor_connector->modes[modes], tile_property)) {
 			drm->console_mode_info = main_monitor_connector->modes[modes];
 			break;
 		}
 	}
-	/* If there was no preferred mode use first one. */
+
+	// If there was no non-tiled preferred mode use the first non-tiled one
+	// from the list.
+	if (modes == main_monitor_connector->count_modes) {
+		for (modes = 0; modes < main_monitor_connector->count_modes; modes++) {
+			if (!is_tile_mode(&main_monitor_connector->modes[modes], tile_property)) {
+				drm->console_mode_info = main_monitor_connector->modes[modes];
+				break;
+			}
+		}
+	}
+
+	// If all modes are tiled use the first one
 	if (modes == main_monitor_connector->count_modes)
 		drm->console_mode_info = main_monitor_connector->modes[0];
 
@@ -950,6 +1040,7 @@ bool drm_read_edid(drm_t* drm)
 					return (drm->edid_found = true);
 				}
 			}
+		    drmModeFreeProperty(prop);
 		}
 	}
 
