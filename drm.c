@@ -518,24 +518,29 @@ drm_t* drm_scan(void)
 		uint64_t atomic = 0;
 		drm_t* drm = calloc(1, sizeof(drm_t));
 
-		if (!drm)
+		if (!drm) {
+			LOG(ERROR, "drm_t calloc failed.");
 			return NULL;
+		}
 
 try_open_again:
 		ret = asprintf(&dev_name, DRM_DEV_NAME, DRM_DIR_NAME, i);
 		if (ret < 0) {
+			LOG(INFO, "asprintf for card%d failed with %d.", i, ret);
 			drm_fini(drm);
 			continue;
 		}
 		drm->fd = open(dev_name, O_RDWR | O_CLOEXEC, 0);
 		free(dev_name);
 		if (drm->fd < 0) {
+			LOG(INFO, "open drm fd for card %d failed with %d .", i, drm->fd);
 			drm_fini(drm);
 			continue;
 		}
 		/* if we have master this should succeed */
 		ret = drmSetMaster(drm->fd);
 		if (ret != 0) {
+			LOG(INFO, "drmSetMaster for card%d failed with %d. Retrying.", i, ret);
 			drmClose(drm->fd);
 			drm->fd = -1;
 			usleep(100*1000);
@@ -557,12 +562,14 @@ try_open_again:
 
 		drm->resources = drmModeGetResources(drm->fd);
 		if (!drm->resources) {
+			LOG(INFO, "drmModeGetResources failed for card%d", i);
 			drm_fini(drm);
 			continue;
 		}
 
 		/* Expect at least one crtc so we do not try to run on VGEM. */
 		if (drm->resources->count_crtcs == 0 || drm->resources->count_connectors == 0) {
+			LOG(INFO, "card%d did not have at least one CRTC & connector.", i);
 			drm_fini(drm);
 			continue;
 		}
@@ -570,6 +577,7 @@ try_open_again:
 		drm->plane_resources = drmModeGetPlaneResources(drm->fd);
 
 		if (!find_main_monitor(drm)) {
+			LOG(INFO, "could not find the main monitor for card%d.", i);
 			drm_fini(drm);
 			continue;
 		}
@@ -577,9 +585,11 @@ try_open_again:
 		drm->refcount = 1;
 
 		if (drm_score(drm) > drm_score(best_drm)) {
+			LOG(INFO, "Setting card%d as the best drm.", i);
 			drm_fini(best_drm);
 			best_drm = drm;
 		} else {
+			LOG(INFO, "Not using card%d as the best drm", i);
 			drm_fini(drm);
 		}
 	}
@@ -598,6 +608,8 @@ try_open_again:
 			    best_drm->atomic ? " using atomic" : "");
 			drmFreeVersion(version);
 		}
+	} else {
+		LOG(WARNING, "No suitable drm driver found.");
 	}
 
 	return best_drm;
@@ -654,6 +666,8 @@ int drm_dropmaster(drm_t* drm)
 		drm = g_drm;
 	if (drm)
 		ret = drmDropMaster(drm->fd);
+
+	LOG(INFO, "drm_dropmaster: %d", ret);
 	return ret;
 }
 
@@ -665,6 +679,8 @@ int drm_setmaster(drm_t* drm)
 		drm = g_drm;
 	if (drm)
 		ret = drmSetMaster(drm->fd);
+
+	LOG(INFO, "drm_setmaster: %d", ret);
 	return ret;
 }
 
