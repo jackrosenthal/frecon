@@ -533,7 +533,6 @@ try_open_again:
 		drm->fd = open(dev_name, O_RDWR | O_CLOEXEC, 0);
 		free(dev_name);
 		if (drm->fd < 0) {
-			LOG(INFO, "open drm fd for card %d failed with %d .", i, drm->fd);
 			drm_fini(drm);
 			continue;
 		}
