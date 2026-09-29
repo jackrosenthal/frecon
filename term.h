@@ -27,6 +27,7 @@ extern unsigned int term_num_terminals;
 
 typedef struct _terminal_t terminal_t;
 
+bool term_palette_is_valid(const char *name);
 void term_set_num_terminals(unsigned new_num);
 terminal_t* term_init(unsigned vt, int pts_fd);
 void term_close(terminal_t* terminal);

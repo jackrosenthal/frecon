@@ -27,6 +27,7 @@ typedef struct {
 	bool    pre_create_vts;
 	bool    wait_drop_master;
 	unsigned int vt;
+	const char *palette;
 } commandflags_t;
 
 extern commandflags_t command_flags;

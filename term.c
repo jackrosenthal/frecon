@@ -63,6 +63,69 @@ static char* interactive_cmd_line[] = {
 static bool in_background = false;
 static bool hotplug_occured = false;
 
+static const struct {
+	const char *name;
+	uint8_t colors[TSM_COLOR_NUM][3];
+} palettes[] = {
+	{
+		.name = "wildcherry",
+		.colors = {
+			[TSM_COLOR_BLACK]         = { 0x00, 0x05, 0x06 },
+			[TSM_COLOR_RED]           = { 0xd9, 0x40, 0x85 },
+			[TSM_COLOR_GREEN]         = { 0x2a, 0xb2, 0x50 },
+			[TSM_COLOR_YELLOW]        = { 0xff, 0xd0, 0x6e },
+			[TSM_COLOR_BLUE]          = { 0x87, 0x3b, 0xdb },
+			[TSM_COLOR_MAGENTA]       = { 0xec, 0xec, 0xec },
+			[TSM_COLOR_CYAN]          = { 0xc1, 0xb8, 0xb6 },
+			[TSM_COLOR_LIGHT_GREY]    = { 0xff, 0xf8, 0xdd },
+			[TSM_COLOR_DARK_GREY]     = { 0x00, 0x9c, 0xc9 },
+			[TSM_COLOR_LIGHT_RED]     = { 0xda, 0x6b, 0xab },
+			[TSM_COLOR_LIGHT_GREEN]   = { 0xf4, 0xdb, 0xa5 },
+			[TSM_COLOR_LIGHT_YELLOW]  = { 0xea, 0xc0, 0x66 },
+			[TSM_COLOR_LIGHT_BLUE]    = { 0x2f, 0x8b, 0xb9 },
+			[TSM_COLOR_LIGHT_MAGENTA] = { 0xae, 0x63, 0x6b },
+			[TSM_COLOR_LIGHT_CYAN]    = { 0xff, 0x91, 0x9d },
+			[TSM_COLOR_WHITE]         = { 0xe4, 0x83, 0x8d },
+
+			[TSM_COLOR_FOREGROUND]    = { 0xd9, 0xfa, 0xff },
+			[TSM_COLOR_BACKGROUND]    = { 0x1f, 0x16, 0x26 },
+		},
+	},
+};
+
+static int term_find_palette(const char *name)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(palettes); i++) {
+		if (!strcmp(name, palettes[i].name))
+			return i;
+	}
+
+	return -1;
+}
+
+bool term_palette_is_valid(const char *name)
+{
+	return term_find_palette(name) >= 0;
+}
+
+static void term_set_palette(terminal_t *terminal, const char *name)
+{
+	struct tsm_vte *vte = terminal->term->vte;
+	struct tsm_screen_attr attr;
+	int i = term_find_palette(name);
+
+	if (i < 0)
+		return;
+
+	/* libtsm copies the palette, so casting away const is safe. */
+	tsm_vte_set_custom_palette(vte, (uint8_t (*)[3])palettes[i].colors);
+	tsm_vte_set_palette(vte, "custom");
+
+	/* Fill the screen border with the palette's background. */
+	tsm_vte_get_def_attr(vte, &attr);
+	terminal->background = (attr.br << 16) | (attr.bg << 8) | attr.bb;
+}
+
 
 static void __attribute__ ((noreturn)) term_run_child(terminal_t* terminal)
 {
@@ -555,6 +618,9 @@ terminal_t* term_init(unsigned vt, int pts_fd)
 		term_close(new_terminal);
 		return NULL;
 	}
+
+	if (command_flags.palette)
+		term_set_palette(new_terminal, command_flags.palette);
 
 	if (command_flags.enable_osc)
 		tsm_vte_set_osc_cb(new_terminal->term->vte, term_osc_cb, (void *)new_terminal);

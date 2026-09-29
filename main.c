@@ -48,6 +48,7 @@ splash_t* splash;
 #define  FLAG_NUM_VTS                      'N'
 #define  FLAG_NO_LOGIN                     'n'
 #define  FLAG_OFFSET                       'O'
+#define  FLAG_PALETTE                      'T'
 #define  FLAG_PRE_CREATE_VTS               'P'
 #define  FLAG_PRINT_RESOLUTION             'p'
 #define  FLAG_SCALE                        'S'
@@ -74,6 +75,7 @@ static const struct option command_options[] = {
 	{ "num-vts", required_argument, NULL, FLAG_NUM_VTS },
 	{ "no-login", no_argument, NULL, FLAG_NO_LOGIN },
 	{ "offset", required_argument, NULL, FLAG_OFFSET },
+	{ "palette", required_argument, NULL, FLAG_PALETTE },
 	{ "print-resolution", no_argument, NULL, FLAG_PRINT_RESOLUTION },
 	{ "pre-create-vts", no_argument, NULL, FLAG_PRE_CREATE_VTS },
 	{ "scale", required_argument, NULL, FLAG_SCALE },
@@ -101,6 +103,7 @@ static const char * const command_help[] = {
 	"Number of enabled VTs. The default is 4, the maximum is 12.",
 	"Do not display login prompt on additional VTs.",
 	"Absolute location of the splash image on screen (as x,y).",
+	"Terminal color palette name.",
 	"(Deprecated) Print detected screen resolution and exit.",
 	"Create all VTs immediately instead of on-demand.",
 	"Default scale for splash screen images.",
@@ -394,6 +397,14 @@ int main(int argc, char* argv[])
 
 			case FLAG_NUM_VTS:
 				term_set_num_terminals(strtoul(optarg, NULL, 0));
+				break;
+
+			case FLAG_PALETTE:
+				if (!term_palette_is_valid(optarg)) {
+					fprintf(stderr, "Unknown palette: %s\n", optarg);
+					usage(1);
+				}
+				command_flags.palette = optarg;
 				break;
 
 			case FLAG_PRE_CREATE_VTS:
