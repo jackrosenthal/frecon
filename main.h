@@ -11,6 +11,9 @@
 #define FRECON_PID_FILE FRECON_RUN_DIR "/pid"
 #define FRECON_HI_RES_FILE FRECON_RUN_DIR "/hi_res"
 
+/* Returned by main_process_events() when frecon should exit. */
+#define MAIN_EXIT 1
+
 int main_process_events(uint32_t usec);
 bool set_drm_master_relax(void);
 
@@ -23,6 +26,7 @@ typedef struct {
 	bool    no_login;
 	bool    pre_create_vts;
 	bool    wait_drop_master;
+	unsigned int vt;
 } commandflags_t;
 
 extern commandflags_t command_flags;

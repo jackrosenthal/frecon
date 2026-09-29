@@ -20,6 +20,7 @@
 #include "keysym.h"
 #include "main.h"
 #include "util.h"
+#include "vt.h"
 
 struct input_key_event {
 	uint16_t code;
@@ -196,6 +197,29 @@ static int input_special_key(struct input_key_event* ev)
 					dbus_report_user_activity(USER_ACTIVITY_VOLUME_MUTE_KEY_PRESS);
 					return 1;
 			}
+		}
+	}
+
+	/*
+	 * Kernel VT switching. The kernel keyboard is off on our VT, so we
+	 * have to ask the kernel to switch on its behalf.
+	 */
+	if (vt_is_enabled() && vt_is_foreground() &&
+	    is_alt_pressed(&input.kbd_state) &&
+	    is_control_pressed(&input.kbd_state) &&
+	    !is_shift_pressed(&input.kbd_state) &&
+	    ev->value) {
+		if ((ev->code >= KEY_F1) && (ev->code <= KEY_F10)) {
+			vt_switch_to(ev->code - KEY_F1 + 1);
+			return 1;
+		}
+		if (ev->code == KEY_F11) {
+			vt_switch_to(11);
+			return 1;
+		}
+		if (ev->code == KEY_F12) {
+			vt_switch_to(12);
+			return 1;
 		}
 	}
 

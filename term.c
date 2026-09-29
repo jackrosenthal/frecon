@@ -24,6 +24,7 @@
 #include "shl_pty.h"
 #include "term.h"
 #include "util.h"
+#include "vt.h"
 
 unsigned int term_num_terminals = 4;
 static terminal_t* terminals[TERM_MAX_TERMINALS];
@@ -1022,6 +1023,10 @@ void term_background(bool onetry)
 
 	drm_dropmaster(NULL);
 
+	/* On a kernel VT, the kernel hands the display to the next owner. */
+	if (vt_is_enabled())
+		return;
+
 	if (!dbus_is_initialized()) {
 		LOG(WARNING, "Unable to send display ownership DBus message to "
                 	"Chrome DisplayService: DBus not initialized");
@@ -1048,7 +1053,7 @@ void term_foreground(void)
 	in_background = false;
 
 	/* LOG(INFO, "TIMING: Console switch time start."); */ /* Keep around for timing it in the future. */
-	while (!dbus_release_display_ownership() && retry--) {
+	while (!vt_is_enabled() && !dbus_release_display_ownership() && retry--) {
 		LOG(ERROR, "Chrome did not release master. %s",
 		    retry ? "Trying again." : "Frecon will steal master.");
 		if (retry > 0)

@@ -25,6 +25,7 @@
 #include "splash.h"
 #include "term.h"
 #include "util.h"
+#include "vt.h"
 
 #define  DBUS_WAIT_DELAY_US  50000
 
@@ -51,6 +52,7 @@ splash_t* splash;
 #define  FLAG_PRINT_RESOLUTION             'p'
 #define  FLAG_SCALE                        'S'
 #define  FLAG_SPLASH_ONLY                  's'
+#define  FLAG_VT                           'v'
 #define  FLAG_WAIT_DROP_MASTER             'W'
 
 static const struct option command_options[] = {
@@ -76,6 +78,7 @@ static const struct option command_options[] = {
 	{ "pre-create-vts", no_argument, NULL, FLAG_PRE_CREATE_VTS },
 	{ "scale", required_argument, NULL, FLAG_SCALE },
 	{ "splash-only", no_argument, NULL, FLAG_SPLASH_ONLY },
+	{ "vt", required_argument, NULL, FLAG_VT },
 	{ "wait-drop-master", no_argument, NULL, FLAG_WAIT_DROP_MASTER },
 	{ NULL, 0, NULL, 0 }
 };
@@ -102,6 +105,7 @@ static const char * const command_help[] = {
 	"Create all VTs immediately instead of on-demand.",
 	"Default scale for splash screen images.",
 	"Exit immediately after finishing splash animation.",
+	"Run on kernel VT <arg> (/dev/tty<arg>) and switch with other VTs.",
 	"Wait to drop DRM master until the escape code is received.",
 };
 
@@ -184,6 +188,7 @@ int main_process_events(uint32_t usec)
 
 	dbus_add_fds(&read_set, &exception_set, &maxfd);
 	input_add_fds(&read_set, &exception_set, &maxfd);
+	vt_add_fds(&read_set, &exception_set, &maxfd);
 	dev_add_fds(&read_set, &exception_set, &maxfd);
 
 	for (unsigned i = 0; i < term_num_terminals; i++) {
@@ -204,6 +209,9 @@ int main_process_events(uint32_t usec)
 		return 0;
 
 	dbus_dispatch_io();
+
+	if (!vt_dispatch_io(&read_set))
+		return MAIN_EXIT;
 
 	if (term_exception(terminal, &exception_set))
 		return -1;
@@ -283,6 +291,8 @@ int main_loop(void)
 		uint32_t usec = get_process_events_timeout();
 
 		status = main_process_events(usec);
+		if (status == MAIN_EXIT)
+			break;
 		if (status != 0) {
 			LOG(ERROR, "Input process returned %d.", status);
 			break;
@@ -394,6 +404,10 @@ int main(int argc, char* argv[])
 				command_flags.splash_only = true;
 				break;
 
+			case FLAG_VT:
+				command_flags.vt = strtoul(optarg, NULL, 0);
+				break;
+
 			case FLAG_WAIT_DROP_MASTER:
 				command_flags.wait_drop_master = true;
 				break;
@@ -433,6 +447,14 @@ int main(int argc, char* argv[])
 			sprintf(pids, "%u", getpid());
 			write_string_to_file(FRECON_PID_FILE, pids);
 		}
+	}
+
+	if (command_flags.vt) {
+		if (!vt_init(command_flags.vt))
+			return EXIT_FAILURE;
+		/* The kernel switches between VTs; frecon runs one terminal. */
+		command_flags.enable_vts = false;
+		command_flags.enable_vt1 = false;
 	}
 
 	ret = input_init();
@@ -574,6 +596,7 @@ main_done:
 	dev_close();
 	dbus_destroy();
 	drm_close();
+	vt_close();
 	if (command_flags.daemon)
 		unlink(FRECON_PID_FILE);
 	unlink(FRECON_HI_RES_FILE);
