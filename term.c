@@ -611,6 +611,12 @@ static void term_esc_draw_box(terminal_t* terminal, char* params)
 	offx *= scale;
 	offy *= scale;
 
+	/*
+	 * Text before the box in the same write is only drawn after the write
+	 * is processed, so draw it now to keep the box on top of it.
+	 */
+	term_redraw(terminal);
+
 	if (!fb_lock(terminal->fb))
 		goto done;
 
@@ -829,8 +835,11 @@ static int term_resize(terminal_t* term, int scaling)
 		return -1;
 	}
 
+	/* The pixel size lets programs place box escapes on the text. */
 	status = shl_pty_resize(term->term->pty, term->term->w_in_char,
-				term->term->h_in_char);
+				term->term->h_in_char,
+				term->term->w_in_char * char_width,
+				term->term->h_in_char * char_height);
 	if (status < 0) {
 		font_free();
 		return -1;

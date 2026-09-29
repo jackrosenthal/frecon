@@ -122,6 +122,12 @@ printf "\033]image:file=/usr/share/chromeos-assets/images_100_percent/boot_splas
 printf "\033]box:color=0xFFFFFFFF;size=100,100\a" > /dev/pts/1
 ```
 
+A box is drawn on top of the text written before it.  Text redrawn later
+paints over the box in the cells it changes.  To place boxes on the text, the
+terminal's size in pixels is in the `ws_xpixel` and `ws_ypixel` fields of its
+window size, so a cell is `ws_xpixel / ws_col` pixels wide and
+`ws_ypixel / ws_row` pixels high.
+
 ## Input escape code
 
 An escape code can be used to enable/disable keyboard input processing on

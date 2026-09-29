@@ -41,7 +41,8 @@ int shl_pty_dispatch(struct shl_pty *pty);
 int shl_pty_write(struct shl_pty *pty, const char *u8, size_t len);
 int shl_pty_signal(struct shl_pty *pty, int sig);
 int shl_pty_resize(struct shl_pty *pty, unsigned short term_width,
-		   unsigned short term_height);
+		   unsigned short term_height, unsigned short pixel_width,
+		   unsigned short pixel_height);
 
 /* pty bridge */
 
