@@ -690,6 +690,39 @@ static void term_esc_switchvt(terminal_t* terminal, char* params)
 	term_switch_to(vt);
 }
 
+static void term_esc_keymap(terminal_t* terminal, char* params)
+{
+	const char* model = NULL;
+	const char* layout = NULL;
+	const char* variant = NULL;
+	const char* options = NULL;
+	char* tok = params;
+
+	while (*tok) {
+		size_t len = strcspn(tok, ";");
+		char* next = tok + len;
+
+		if (*next)
+			*next++ = '\0';
+
+		if (strncmp("model=", tok, 6) == 0)
+			model = tok + 6;
+		else if (strncmp("layout=", tok, 7) == 0)
+			layout = tok + 7;
+		else if (strncmp("variant=", tok, 8) == 0)
+			variant = tok + 8;
+		else if (strncmp("options=", tok, 8) == 0)
+			options = tok + 8;
+		else if (len)
+			LOG(WARNING, "Unknown keymap parameter \"%s\".", tok);
+
+		tok = next;
+	}
+
+	if (!input_set_keymap(model, layout, variant, options))
+		LOG(ERROR, "Failed to set keymap, keeping the current one.");
+}
+
 static void term_esc_drmdropmaster(terminal_t* terminal, char* params)
 {
 	term_background(true);
@@ -746,6 +779,8 @@ static void term_osc_cb(struct tsm_vte *vte, const char *osc_string,
 		term_esc_input(terminal, osc + 6);
 	else if (strncmp(osc, "switchvt:", 9) == 0)
 		term_esc_switchvt(terminal, osc + 9);
+	else if (strncmp(osc, "keymap:", 7) == 0)
+		term_esc_keymap(terminal, osc + 7);
 	else if (strncmp(osc, "drmdropmaster", 13) == 0)
 		term_esc_drmdropmaster(terminal, osc + 13);
 	else if (is_xterm_osc(osc))

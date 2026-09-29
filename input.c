@@ -457,16 +457,57 @@ void input_remove(const char* devname)
 }
 
 /*
+ * Switch to the xkb keymap for model, layout, variant and options from
+ * xkeyboard-config.  NULL or empty names use libxkbcommon's defaults.  On
+ * failure the current keymap is kept.
+ */
+bool input_set_keymap(const char* model, const char* layout,
+		      const char* variant, const char* options)
+{
+	struct xkb_rule_names names = {
+		.model = model,
+		.layout = layout,
+		.variant = variant,
+		.options = options,
+	};
+	struct xkb_keymap* keymap;
+	struct xkb_state* state;
+
+	if (!input.xkb_context)
+		return false;
+
+	keymap = xkb_keymap_new_from_names(input.xkb_context, &names,
+					   XKB_KEYMAP_COMPILE_NO_FLAGS);
+	if (!keymap) {
+		LOG(WARNING, "Failed to compile xkb keymap");
+		return false;
+	}
+
+	state = xkb_state_new(keymap);
+	if (!state) {
+		LOG(WARNING, "Failed to create xkb state");
+		xkb_keymap_unref(keymap);
+		return false;
+	}
+
+	xkb_state_unref(input.xkb_state);
+	xkb_keymap_unref(input.xkb_keymap);
+	input.xkb_keymap = keymap;
+	input.xkb_state = state;
+	return true;
+}
+
+/*
  * Load the system keyboard layout (localectl set-x11-keymap) from
  * xkeyboard-config.  On failure the built-in US layout is used.
  */
 static void input_xkb_init(void)
 {
-	struct xkb_rule_names names = { 0 };
 	char* model = NULL;
 	char* layout = NULL;
 	char* variant = NULL;
 	char* options = NULL;
+	bool ok;
 
 	input.xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	if (!input.xkb_context) {
@@ -474,38 +515,17 @@ static void input_xkb_init(void)
 		return;
 	}
 
-	if (dbus_get_x11_keymap(&model, &layout, &variant, &options)) {
-		names.model = model;
-		names.layout = layout;
-		names.variant = variant;
-		names.options = options;
-	}
-
-	input.xkb_keymap = xkb_keymap_new_from_names(input.xkb_context, &names,
-						     XKB_KEYMAP_COMPILE_NO_FLAGS);
+	dbus_get_x11_keymap(&model, &layout, &variant, &options);
+	ok = input_set_keymap(model, layout, variant, options);
 	free(model);
 	free(layout);
 	free(variant);
 	free(options);
-	if (!input.xkb_keymap) {
-		LOG(WARNING, "Failed to compile xkb keymap, using built-in keymap");
-		goto unref_context;
+	if (!ok) {
+		LOG(WARNING, "Using built-in keymap");
+		xkb_context_unref(input.xkb_context);
+		input.xkb_context = NULL;
 	}
-
-	input.xkb_state = xkb_state_new(input.xkb_keymap);
-	if (!input.xkb_state) {
-		LOG(WARNING, "Failed to create xkb state, using built-in keymap");
-		goto unref_keymap;
-	}
-
-	return;
-
-unref_keymap:
-	xkb_keymap_unref(input.xkb_keymap);
-	input.xkb_keymap = NULL;
-unref_context:
-	xkb_context_unref(input.xkb_context);
-	input.xkb_context = NULL;
 }
 
 int input_init()

@@ -8,6 +8,7 @@
 #define INPUT_H
 
 #include <linux/input.h>
+#include <stdbool.h>
 
 #include "term.h"
 
@@ -18,5 +19,7 @@ void input_dispatch_io(fd_set* read_set, fd_set* exception_set);
 int input_add(const char* devname);
 void input_remove(const char* devname);
 int input_check_lid_state(void);
+bool input_set_keymap(const char* model, const char* layout,
+		      const char* variant, const char* options);
 
 #endif

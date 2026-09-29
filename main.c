@@ -114,7 +114,7 @@ static const char * const command_help[] = {
 	"Create all VTs immediately instead of on-demand.",
 	"Default scale for splash screen images.",
 	"Exit immediately after finishing splash animation.",
-	"Run on kernel VT <arg> (N or ttyN) and switch with other VTs.",
+	"Run on kernel VT <arg> (N or ttyN) and switch with other VTs.  Implies --enable-osc.",
 	"Wait to drop DRM master until the escape code is received.",
 };
 
@@ -490,6 +490,7 @@ int main(int argc, char* argv[])
 		/* The kernel switches between VTs; frecon runs one terminal. */
 		command_flags.enable_vts = false;
 		command_flags.enable_vt1 = false;
+		command_flags.enable_osc = true;
 	}
 
 	ret = input_init();

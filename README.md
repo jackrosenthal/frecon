@@ -183,6 +183,21 @@ Example:
 printf "\033]switchvt:1\a" > /run/frecon/current
 ```
 
+## Keymap escape code
+
+An escape code that can be used to change the xkb keyboard layout.  The
+keymap is shared by all terminals of a frecon process.  Parameters can be
+specified in any order, and parameters that are omitted or empty use the
+libxkbcommon defaults.  If the keymap cannot be compiled, the current one is
+kept.
+
+`keymap:model=m;layout=l;variant=v;options=o`
+
+Example:
+```sh
+printf "\033]keymap:layout=us,de;variant=,nodeadkeys;options=grp:alt_shift_toggle\a" > /run/frecon/current
+```
+
 ## Files
 
 Frecon creates the following files and links in `/run/frecon` directory:
