@@ -6,6 +6,7 @@
 
 #include <dbus/dbus.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "dbus.h"
@@ -410,4 +411,100 @@ void dbus_set_suspend_done_callback(void (*callback)(void*),
 	}
 	suspend_done_callback = callback;
 	suspend_done_callback_userptr = userptr;
+}
+
+static char* dbus_get_string_property(DBusConnection* conn,
+				      const char* service_name,
+				      const char* service_path,
+				      const char* interface,
+				      const char* property)
+{
+	DBusMessage* msg;
+	DBusMessage* reply;
+	DBusMessageIter iter, variant;
+	DBusError err;
+	const char* value;
+	char* result = NULL;
+
+	msg = dbus_message_new_method_call(service_name, service_path,
+					   DBUS_INTERFACE_PROPERTIES, "Get");
+	if (!msg)
+		return NULL;
+
+	if (!dbus_message_append_args(msg,
+				      DBUS_TYPE_STRING, &interface,
+				      DBUS_TYPE_STRING, &property,
+				      DBUS_TYPE_INVALID)) {
+		dbus_message_unref(msg);
+		return NULL;
+	}
+
+	dbus_error_init(&err);
+	reply = dbus_connection_send_with_reply_and_block(conn, msg,
+			DBUS_DEFAULT_DELAY, &err);
+	dbus_message_unref(msg);
+	if (!reply) {
+		LOG(WARNING, "Unable to get %s: %s", property, err.message);
+		dbus_error_free(&err);
+		return NULL;
+	}
+
+	if (dbus_message_iter_init(reply, &iter) &&
+	    dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_VARIANT) {
+		dbus_message_iter_recurse(&iter, &variant);
+		if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_STRING) {
+			dbus_message_iter_get_basic(&variant, &value);
+			result = strdup(value);
+		}
+	}
+
+	dbus_message_unref(reply);
+	return result;
+}
+
+/*
+ * Get the system keyboard layout that systemd-localed stores for X11.  This
+ * runs before dbus_init(), so it uses its own connection.  On success, the
+ * caller must free the strings.
+ */
+bool dbus_get_x11_keymap(char** model, char** layout, char** variant,
+			 char** options)
+{
+	static const char* const properties[] = {
+		"X11Model", "X11Layout", "X11Variant", "X11Options",
+	};
+	char** values[] = { model, layout, variant, options };
+	DBusConnection* conn;
+	DBusError err;
+	bool ret = true;
+
+	dbus_error_init(&err);
+	conn = dbus_bus_get_private(DBUS_BUS_SYSTEM, &err);
+	if (!conn) {
+		LOG(DEBUG, "Cannot get DBUS connection: %s", err.message);
+		dbus_error_free(&err);
+		return false;
+	}
+	dbus_connection_set_exit_on_disconnect(conn, FALSE);
+
+	for (unsigned i = 0; i < ARRAY_SIZE(properties); i++) {
+		*values[i] = dbus_get_string_property(conn, kLocaleServiceName,
+						      kLocaleServicePath,
+						      kLocaleInterface,
+						      properties[i]);
+		if (!*values[i])
+			ret = false;
+	}
+
+	dbus_connection_close(conn);
+	dbus_connection_unref(conn);
+
+	if (!ret) {
+		for (unsigned i = 0; i < ARRAY_SIZE(values); i++) {
+			free(*values[i]);
+			*values[i] = NULL;
+		}
+	}
+
+	return ret;
 }

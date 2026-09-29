@@ -23,5 +23,7 @@ bool dbus_is_initialized(void);
 void dbus_set_login_prompt_visible_callback(void (*callback)(void));
 void dbus_set_suspend_done_callback(void (*callback)(void*),
 				    void* userptr);
+bool dbus_get_x11_keymap(char** model, char** layout, char** variant,
+			 char** options);
 
 #endif // FRECON_DBUS_H

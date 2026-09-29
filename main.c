@@ -111,7 +111,7 @@ static const char * const command_help[] = {
 	"Create all VTs immediately instead of on-demand.",
 	"Default scale for splash screen images.",
 	"Exit immediately after finishing splash animation.",
-	"Run on kernel VT <arg> (/dev/tty<arg>) and switch with other VTs.",
+	"Run on kernel VT <arg> (N or ttyN) and switch with other VTs.",
 	"Wait to drop DRM master until the escape code is received.",
 };
 
@@ -425,6 +425,9 @@ int main(int argc, char* argv[])
 				break;
 
 			case FLAG_VT:
+				/* Accept systemd's instance names, e.g. tty2. */
+				if (!strncmp(optarg, "tty", 3))
+					optarg += 3;
 				command_flags.vt = strtoul(optarg, NULL, 0);
 				break;
 

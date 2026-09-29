@@ -50,4 +50,8 @@ static const char kReleaseOwnership[] = "ReleaseOwnership";
 static const char kFreconDbusInterface[] = "org.chromium.frecon";
 static const char kFreconDbusPath[] = "/org/chromium/frecon";
 
+static const char kLocaleServiceName[] = "org.freedesktop.locale1";
+static const char kLocaleServicePath[] = "/org/freedesktop/locale1";
+static const char kLocaleInterface[] = "org.freedesktop.locale1";
+
 #endif // FRECON_DBUS_API_H_

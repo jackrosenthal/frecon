@@ -457,22 +457,36 @@ void input_remove(const char* devname)
 }
 
 /*
- * Load the keyboard layout from xkeyboard-config. libxkbcommon picks the
- * rules, model, layout, variant and options from the XKB_DEFAULT_RULES,
- * XKB_DEFAULT_MODEL, XKB_DEFAULT_LAYOUT, XKB_DEFAULT_VARIANT and
- * XKB_DEFAULT_OPTIONS environment variables, and the data directory from
- * XKB_CONFIG_ROOT. On failure the built-in US layout is used.
+ * Load the system keyboard layout (localectl set-x11-keymap) from
+ * xkeyboard-config.  On failure the built-in US layout is used.
  */
 static void input_xkb_init(void)
 {
+	struct xkb_rule_names names = { 0 };
+	char* model = NULL;
+	char* layout = NULL;
+	char* variant = NULL;
+	char* options = NULL;
+
 	input.xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	if (!input.xkb_context) {
 		LOG(WARNING, "Failed to create xkb context, using built-in keymap");
 		return;
 	}
 
-	input.xkb_keymap = xkb_keymap_new_from_names(input.xkb_context, NULL,
+	if (dbus_get_x11_keymap(&model, &layout, &variant, &options)) {
+		names.model = model;
+		names.layout = layout;
+		names.variant = variant;
+		names.options = options;
+	}
+
+	input.xkb_keymap = xkb_keymap_new_from_names(input.xkb_context, &names,
 						     XKB_KEYMAP_COMPILE_NO_FLAGS);
+	free(model);
+	free(layout);
+	free(variant);
+	free(options);
 	if (!input.xkb_keymap) {
 		LOG(WARNING, "Failed to compile xkb keymap, using built-in keymap");
 		goto unref_context;
