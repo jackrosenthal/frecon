@@ -52,6 +52,10 @@ void dbus_set_suspend_done_callback(void (*callback)(void*),
 {
 }
 
+void dbus_set_logins_allowed_callback(void (*callback)(void))
+{
+}
+
 bool dbus_get_x11_keymap(char** model, char** layout, char** variant,
 			 char** options)
 {

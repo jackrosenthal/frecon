@@ -24,6 +24,9 @@ static void (*login_prompt_visible_callback)(void) = NULL;
 static void (*suspend_done_callback)(void*) = NULL;
 static void* suspend_done_callback_userptr = NULL;
 static bool chrome_is_already_up = false;
+static void (*logins_allowed_callback)(void) = NULL;
+static bool logins_allowed = false;
+static char* user_sessions_path = NULL;
 static bool dbus_connect_fail = false;
 static int64_t dbus_connect_fail_time;
 static bool dbus_first_init = true;
@@ -71,6 +74,180 @@ static void toggle_watch(DBusWatch* w, void* data)
 {
 }
 
+static char* dbus_get_string_property(DBusConnection* conn,
+				      const char* service_name,
+				      const char* service_path,
+				      const char* interface,
+				      const char* property)
+{
+	DBusMessage* msg;
+	DBusMessage* reply;
+	DBusMessageIter iter, variant;
+	DBusError err;
+	const char* value;
+	char* result = NULL;
+
+	msg = dbus_message_new_method_call(service_name, service_path,
+					   DBUS_INTERFACE_PROPERTIES, "Get");
+	if (!msg)
+		return NULL;
+
+	if (!dbus_message_append_args(msg,
+				      DBUS_TYPE_STRING, &interface,
+				      DBUS_TYPE_STRING, &property,
+				      DBUS_TYPE_INVALID)) {
+		dbus_message_unref(msg);
+		return NULL;
+	}
+
+	dbus_error_init(&err);
+	reply = dbus_connection_send_with_reply_and_block(conn, msg,
+			DBUS_DEFAULT_DELAY, &err);
+	dbus_message_unref(msg);
+	if (!reply) {
+		LOG(WARNING, "Unable to get %s: %s", property, err.message);
+		dbus_error_free(&err);
+		return NULL;
+	}
+
+	if (dbus_message_iter_init(reply, &iter) &&
+	    dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_VARIANT) {
+		dbus_message_iter_recurse(&iter, &variant);
+		if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_STRING) {
+			dbus_message_iter_get_basic(&variant, &value);
+			result = strdup(value);
+		}
+	}
+
+	dbus_message_unref(reply);
+	return result;
+}
+
+static void set_logins_allowed(void)
+{
+	logins_allowed = true;
+	if (logins_allowed_callback) {
+		logins_allowed_callback();
+		logins_allowed_callback = NULL;
+	}
+}
+
+/*
+ * systemd-user-sessions.service becomes active once boot has progressed
+ * far enough to allow logins.
+ */
+static DBusHandlerResult handle_properties_changed(DBusMessage* message)
+{
+	DBusMessageIter iter, dict, entry, variant;
+	const char* interface;
+	const char* name;
+	const char* value;
+
+	if (!user_sessions_path ||
+	    !dbus_message_has_path(message, user_sessions_path))
+		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
+	if (!dbus_message_iter_init(message, &iter) ||
+	    dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_STRING)
+		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
+	dbus_message_iter_get_basic(&iter, &interface);
+	if (strcmp(interface, kSystemdUnitInterface) ||
+	    !dbus_message_iter_next(&iter) ||
+	    dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY)
+		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
+	for (dbus_message_iter_recurse(&iter, &dict);
+	     dbus_message_iter_get_arg_type(&dict) == DBUS_TYPE_DICT_ENTRY;
+	     dbus_message_iter_next(&dict)) {
+		dbus_message_iter_recurse(&dict, &entry);
+		dbus_message_iter_get_basic(&entry, &name);
+		if (strcmp(name, "ActiveState"))
+			continue;
+
+		dbus_message_iter_next(&entry);
+		dbus_message_iter_recurse(&entry, &variant);
+		if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_STRING) {
+			dbus_message_iter_get_basic(&variant, &value);
+			if (!strcmp(value, "active"))
+				set_logins_allowed();
+		}
+		break;
+	}
+
+	return DBUS_HANDLER_RESULT_HANDLED;
+}
+
+/*
+ * Watch systemd-user-sessions.service for set_logins_allowed().  Without
+ * systemd, e.g. on ChromeOS, this does nothing.
+ */
+static void watch_user_sessions(DBusConnection* conn)
+{
+	DBusMessage* msg;
+	DBusMessage* reply;
+	DBusError err;
+	const char* unit = kUserSessionsUnit;
+	const char* path;
+	char* rule;
+	char* state;
+
+	msg = dbus_message_new_method_call(kSystemdServiceName,
+			kSystemdServicePath, kSystemdManagerInterface, "LoadUnit");
+	if (!msg)
+		return;
+
+	if (!dbus_message_append_args(msg, DBUS_TYPE_STRING, &unit,
+				      DBUS_TYPE_INVALID)) {
+		dbus_message_unref(msg);
+		return;
+	}
+
+	dbus_error_init(&err);
+	reply = dbus_connection_send_with_reply_and_block(conn, msg,
+			DBUS_DEFAULT_DELAY, &err);
+	dbus_message_unref(msg);
+	if (!reply) {
+		LOG(DEBUG, "Unable to load %s: %s", unit, err.message);
+		dbus_error_free(&err);
+		return;
+	}
+
+	if (dbus_message_get_args(reply, NULL, DBUS_TYPE_OBJECT_PATH, &path,
+				  DBUS_TYPE_INVALID))
+		user_sessions_path = strdup(path);
+	dbus_message_unref(reply);
+	if (!user_sessions_path)
+		return;
+
+	/* systemd only sends unit PropertiesChanged signals to subscribers. */
+	msg = dbus_message_new_method_call(kSystemdServiceName,
+			kSystemdServicePath, kSystemdManagerInterface, "Subscribe");
+	if (!msg)
+		return;
+	reply = dbus_connection_send_with_reply_and_block(conn, msg,
+			DBUS_DEFAULT_DELAY, NULL);
+	dbus_message_unref(msg);
+	if (reply)
+		dbus_message_unref(reply);
+
+	if (asprintf(&rule, "type='signal',sender='%s',path='%s',"
+		     "interface='%s',member='PropertiesChanged'",
+		     kSystemdServiceName, user_sessions_path,
+		     DBUS_INTERFACE_PROPERTIES) < 0)
+		return;
+	dbus_bus_add_match(conn, rule, NULL);
+	free(rule);
+
+	/* It is already active if frecon started after boot. */
+	state = dbus_get_string_property(conn, kSystemdServiceName,
+					 user_sessions_path,
+					 kSystemdUnitInterface, "ActiveState");
+	if (state && !strcmp(state, "active"))
+		set_logins_allowed();
+	free(state);
+}
+
 static DBusHandlerResult handle_login_prompt_visible(DBusMessage* message)
 {
 	if (login_prompt_visible_callback) {
@@ -100,6 +277,9 @@ static DBusHandlerResult frecon_dbus_message_filter(DBusConnection* connection,
 	else if (dbus_message_is_signal(message,
 				kPowerManagerInterface, kSuspendDoneSignal))
 		return handle_suspend_done(message);
+	else if (dbus_message_is_signal(message,
+				DBUS_INTERFACE_PROPERTIES, "PropertiesChanged"))
+		return handle_properties_changed(message);
 
 	return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 }
@@ -170,6 +350,8 @@ bool dbus_init()
 	if (!stat) {
 		LOG(ERROR, "failed to add message filter");
 	}
+
+	watch_user_sessions(new_dbus->conn);
 
 	stat = dbus_connection_set_watch_functions(new_dbus->conn,
 			add_watch, remove_watch, toggle_watch,
@@ -413,53 +595,14 @@ void dbus_set_suspend_done_callback(void (*callback)(void*),
 	suspend_done_callback_userptr = userptr;
 }
 
-static char* dbus_get_string_property(DBusConnection* conn,
-				      const char* service_name,
-				      const char* service_path,
-				      const char* interface,
-				      const char* property)
+void dbus_set_logins_allowed_callback(void (*callback)(void))
 {
-	DBusMessage* msg;
-	DBusMessage* reply;
-	DBusMessageIter iter, variant;
-	DBusError err;
-	const char* value;
-	char* result = NULL;
-
-	msg = dbus_message_new_method_call(service_name, service_path,
-					   DBUS_INTERFACE_PROPERTIES, "Get");
-	if (!msg)
-		return NULL;
-
-	if (!dbus_message_append_args(msg,
-				      DBUS_TYPE_STRING, &interface,
-				      DBUS_TYPE_STRING, &property,
-				      DBUS_TYPE_INVALID)) {
-		dbus_message_unref(msg);
-		return NULL;
+	if (logins_allowed) {
+		if (callback)
+			callback();
+	} else {
+		logins_allowed_callback = callback;
 	}
-
-	dbus_error_init(&err);
-	reply = dbus_connection_send_with_reply_and_block(conn, msg,
-			DBUS_DEFAULT_DELAY, &err);
-	dbus_message_unref(msg);
-	if (!reply) {
-		LOG(WARNING, "Unable to get %s: %s", property, err.message);
-		dbus_error_free(&err);
-		return NULL;
-	}
-
-	if (dbus_message_iter_init(reply, &iter) &&
-	    dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_VARIANT) {
-		dbus_message_iter_recurse(&iter, &variant);
-		if (dbus_message_iter_get_arg_type(&variant) == DBUS_TYPE_STRING) {
-			dbus_message_iter_get_basic(&variant, &value);
-			result = strdup(value);
-		}
-	}
-
-	dbus_message_unref(reply);
-	return result;
 }
 
 /*

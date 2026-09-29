@@ -177,6 +177,11 @@ static void main_on_login_prompt_visible(void)
 	}
 }
 
+static void main_on_logins_allowed(void)
+{
+	splash_terminate(splash);
+}
+
 int main_process_events(uint32_t usec)
 {
 	terminal_t* terminal;
@@ -583,6 +588,8 @@ int main(int argc, char* argv[])
 		splash_add_image(splash, argv[i]);
 
 	if (drm && splash_num_images(splash) > 0) {
+		/* End the splash animation once boot allows logins. */
+		dbus_set_logins_allowed_callback(main_on_logins_allowed);
 		ret = splash_run(splash);
 		if (ret) {
 			LOG(ERROR, "Splash_run failed: %d.", ret);

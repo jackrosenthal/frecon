@@ -23,7 +23,7 @@
 #include "term.h"
 #include "util.h"
 
-#define  MAX_SPLASH_IMAGES      (30)
+#define  MAX_SPLASH_IMAGES      (64)
 #define  MAX_SPLASH_WAITTIME    (8)
 
 typedef struct {
@@ -71,6 +71,12 @@ int splash_destroy(splash_t* splash)
 	free(splash);
 	term_destroy_splash_term();
 	return 0;
+}
+
+void splash_terminate(splash_t* splash)
+{
+	if (splash)
+		splash->terminated = true;
 }
 
 int splash_set_clear(splash_t* splash, uint32_t clear_color)
@@ -134,15 +140,6 @@ int splash_run(splash_t* splash)
 	if (!terminal)
 		return -ENOENT;
 
-	/* Update the bootstat metrics once the first image is shown */
-	errno = 0;
-	status = system("/usr/sbin/bootstat splash-screen-visible");
-	if (status) {
-		LOG(ERROR, "Failed to execute 'bootstat splash-screen-visible': "
-			"status = %d, errno = %d (%s)",
-			status, errno, strerror(errno));
-	}
-
 	/*
 	 * First draw the actual splash screen
 	 */
@@ -155,8 +152,8 @@ int splash_run(splash_t* splash)
 	loop_count = (splash->loop_start >= 0 && splash->loop_start < splash->num_images) ? splash->loop_count : 1;
 	loop_start = (splash->loop_start >= 0 && splash->loop_start < splash->num_images) ? splash->loop_start : 0;
 
-	for (c = 0; ((loop_count < 0) ? true : (c < loop_count)); c++)
-	for (i = (c > 0) ? loop_start : 0; i < splash->num_images; i++) {
+	for (c = 0; !splash->terminated && ((loop_count < 0) ? true : (c < loop_count)); c++)
+	for (i = (c > 0) ? loop_start : 0; !splash->terminated && i < splash->num_images; i++) {
 		image = splash->image_frames[i].image;
 		status = image_load_image_from_file(image);
 		if (status != 0 && ec_li < MAX_SPLASH_IMAGES) {

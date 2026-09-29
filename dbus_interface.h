@@ -54,4 +54,10 @@ static const char kLocaleServiceName[] = "org.freedesktop.locale1";
 static const char kLocaleServicePath[] = "/org/freedesktop/locale1";
 static const char kLocaleInterface[] = "org.freedesktop.locale1";
 
+static const char kSystemdServiceName[] = "org.freedesktop.systemd1";
+static const char kSystemdServicePath[] = "/org/freedesktop/systemd1";
+static const char kSystemdManagerInterface[] = "org.freedesktop.systemd1.Manager";
+static const char kSystemdUnitInterface[] = "org.freedesktop.systemd1.Unit";
+static const char kUserSessionsUnit[] = "systemd-user-sessions.service";
+
 #endif // FRECON_DBUS_API_H_
