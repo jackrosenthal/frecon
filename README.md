@@ -40,6 +40,10 @@ after finishing splash animation.
 * `--frame-interval=N`
 	Specify default time (in milliseconds) between frames of splash screen
 animation.
+* `--login-cmd=/path/to/program`
+	Run this program in interactive terminals instead of `agetty`, for
+example a login manager.  It is run without arguments, and is restarted when
+it exits.
 * `--loop-start=N`
 	Specify frame to start splash animation loop. This option also enables
 the animation loop.

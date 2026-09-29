@@ -126,6 +126,12 @@ static char* interactive_cmd_line[] = {
 	NULL
 };
 
+/* Replaces interactive_cmd_line when --login-cmd is given. */
+static char* login_cmd_line[] = {
+	NULL,
+	NULL
+};
+
 static bool in_background = false;
 static bool hotplug_occured = false;
 
@@ -895,7 +901,10 @@ terminal_t* term_init(unsigned vt, int pts_fd)
 		return NULL;
 	}
 
-	if (interactive)
+	if (interactive && command_flags.login_cmd) {
+		login_cmd_line[0] = command_flags.login_cmd;
+		new_terminal->exec = login_cmd_line;
+	} else if (interactive)
 		new_terminal->exec = interactive_cmd_line;
 	else
 		new_terminal->exec = NULL;

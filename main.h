@@ -29,6 +29,7 @@ typedef struct {
 	bool    wait_drop_master;
 	unsigned int vt;
 	const char *palette;
+	char *login_cmd;
 } commandflags_t;
 
 extern commandflags_t command_flags;

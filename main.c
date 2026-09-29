@@ -42,6 +42,7 @@ splash_t* splash;
 #define  FLAG_HELP                         'h'
 #define  FLAG_IMAGE                        'i'
 #define  FLAG_IMAGE_HIRES                  'I'
+#define  FLAG_LOGIN_CMD                    'x'
 #define  FLAG_LOOP_COUNT                   'C'
 #define  FLAG_LOOP_START                   'l'
 #define  FLAG_LOOP_INTERVAL                'L'
@@ -70,6 +71,7 @@ static const struct option command_options[] = {
 	{ "help", no_argument, NULL, FLAG_HELP },
 	{ "image", required_argument, NULL, FLAG_IMAGE },
 	{ "image-hires", required_argument, NULL, FLAG_IMAGE_HIRES },
+	{ "login-cmd", required_argument, NULL, FLAG_LOGIN_CMD },
 	{ "loop-count", required_argument, NULL, FLAG_LOOP_COUNT },
 	{ "loop-start", required_argument, NULL, FLAG_LOOP_START },
 	{ "loop-interval", required_argument, NULL, FLAG_LOOP_INTERVAL },
@@ -99,6 +101,7 @@ static const char * const command_help[] = {
 	"This help screen!",
 	"Image (low res) to use for splash animation.",
 	"Image (hi res) to use for splash animation.",
+	"Program to run in terminals instead of agetty.",
 	"Number of times to loop splash animations (unset = forever).",
 	"First frame to start the splash animation loop (and enable looping).",
 	"Pause time (in msecs) between splash animation frames.",
@@ -403,6 +406,10 @@ int main(int argc, char* argv[])
 
 			case FLAG_ENABLE_VTS:
 				command_flags.enable_vts = true;;
+				break;
+
+			case FLAG_LOGIN_CMD:
+				command_flags.login_cmd = optarg;
 				break;
 
 			case FLAG_NO_LOGIN:
