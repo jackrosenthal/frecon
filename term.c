@@ -983,6 +983,9 @@ terminal_t* term_init(unsigned vt, int pts_fd)
 void term_activate(terminal_t* terminal)
 {
 	term_set_current_to(terminal);
+	/* While another VT is shown, vt_acquire() activates it later. */
+	if (vt_is_enabled() && !vt_is_foreground())
+		return;
 	terminal->active = true;
 	fb_setmode(terminal->fb);
 	term_redraw(terminal);
@@ -1423,6 +1426,8 @@ void term_foreground(void)
 	int retry = 5;
 
 	if (!in_background)
+		return;
+	if (vt_is_enabled() && !vt_is_foreground())
 		return;
 	in_background = false;
 
