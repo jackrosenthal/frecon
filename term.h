@@ -74,6 +74,12 @@ void term_suspend_done(void*);
 void term_input_enable(terminal_t* terminal, bool input_enable);
 
 /*
+ * Capture the terminal's screen, replacing any earlier capture. Programs on
+ * the terminal read it with the screenshot escape.
+ */
+void term_screenshot(terminal_t* terminal);
+
+/*
  * Mouse support. Buttons, events, and modifiers are TSM_MOUSE_*, positions are
  * in pixels.
  */

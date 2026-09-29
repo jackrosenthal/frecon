@@ -204,6 +204,26 @@ Example:
 printf "\033]keymap:layout=us,de;variant=,nodeadkeys;options=grp:alt_shift_toggle\a" > /run/frecon/current
 ```
 
+## Screenshots
+
+With `--enable-osc`, Print Screen captures the active terminal's screen as it
+is shown, including the text cursor, the selection and the mouse pointer, as a
+PNG.  The capture replaces any earlier one on that terminal, and is kept until
+a program on the same terminal reads it with the escape code:
+
+`screenshot`
+
+frecon writes back `\033]screenshot:<len>;` and `<len>` bytes of PNG to the
+terminal's input, with a `<len>` of 0 if there is no capture.  The PNG is
+binary, so the terminal must be in raw mode to read it.  The capture is
+discarded once it is read.
+
+`frectl` does this:
+
+```sh
+frectl save-screenshot screenshot.png
+```
+
 ## Files
 
 Frecon creates the following files and links in `/run/frecon` directory:

@@ -140,6 +140,18 @@ static int input_special_key(struct input_key_event* ev)
 	}
 
 	if (term_is_active(terminal)) {
+		/*
+		 * Print Screen takes a screenshot to be read with the
+		 * screenshot escape. Alt+Print Screen is the kernel's SysRq.
+		 */
+		if (command_flags.enable_osc &&
+		    (ev->code == KEY_SYSRQ || ev->code == KEY_PRINT) &&
+		    !is_alt_pressed(&input.kbd_state) && ev->value) {
+			if (ev->value == 1)
+				term_screenshot(terminal);
+			return 1;
+		}
+
 		if (is_shift_pressed(&input.kbd_state) && ev->value) {
 			switch (ev->code) {
 			case KEY_PAGEUP:

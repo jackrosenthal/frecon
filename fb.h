@@ -78,6 +78,13 @@ bool fb_stepper_init(fb_stepper_t *s, fb_t *fb, int32_t x, int32_t y, uint32_t w
 void fb_pointer_show(fb_t* fb, int32_t x, int32_t y);
 void fb_pointer_hide(fb_t* fb);
 
+/*
+ * Copy the screen as it is shown, with the mouse pointer and the rotation
+ * undone, into a new buffer of fb_getwidth() by fb_getheight() XRGB8888
+ * pixels. Returns NULL on failure.
+ */
+uint32_t* fb_capture(fb_t* fb);
+
 bool static inline fb_stepper_step_x(fb_stepper_t *s, uint32_t rgba)
 {
 	int32_t x = s->start_x + s->x;

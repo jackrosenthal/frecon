@@ -632,3 +632,59 @@ void fb_pointer_hide(fb_t* fb)
 			fb_unlock(fb);
 	}
 }
+
+uint32_t* fb_capture(fb_t* fb)
+{
+	fb_pointer_t* p = &fb->pointer;
+	int32_t width = fb_getwidth(fb);
+	int32_t height = fb_getheight(fb);
+	uint32_t* pixels;
+	uint32_t* map;
+	fb_stepper_t s;
+
+	pixels = malloc((size_t)width * height * sizeof(*pixels));
+	if (!pixels)
+		return NULL;
+
+	/* Locking erases the software pointer, it is drawn in below. */
+	map = fb_lock(fb);
+	if (!map) {
+		free(pixels);
+		return NULL;
+	}
+
+	if (!fb_stepper_init(&s, fb, 0, 0, 1, 1)) {
+		fb_unlock(fb);
+		free(pixels);
+		return NULL;
+	}
+
+	for (int32_t y = 0; y < height; y++)
+		for (int32_t x = 0; x < width; x++)
+			pixels[y * width + x] = map[
+				(x * s.m[0][0] + y * s.m[0][1] + s.m[0][2]) +
+				(x * s.m[1][0] + y * s.m[1][1] + s.m[1][2]) *
+				s.pitch_div_4];
+
+	fb_unlock(fb);
+
+	/* The pointer, whether it is drawn in software or on the hardware cursor. */
+	if (p->visible) {
+		int32_t scale = fb_pointer_scale(fb);
+		int32_t size = POINTER_SIZE * scale;
+
+		for (int32_t iy = 0; iy < size; iy++) {
+			for (int32_t ix = 0; ix < size; ix++) {
+				uint32_t color = fb_pointer_color(ix, iy, scale);
+				int32_t px = p->x + ix - POINTER_HOT_X * scale;
+				int32_t py = p->y + iy - POINTER_HOT_Y * scale;
+
+				if (color && px >= 0 && py >= 0 &&
+				    px < width && py < height)
+					pixels[py * width + px] = color;
+			}
+		}
+	}
+
+	return pixels;
+}

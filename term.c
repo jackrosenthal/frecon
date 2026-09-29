@@ -24,6 +24,7 @@
 #include "image.h"
 #include "input.h"
 #include "main.h"
+#include "screenshot.h"
 #include "shl_pty.h"
 #include "term.h"
 #include "util.h"
@@ -115,6 +116,7 @@ struct _terminal_t {
 	struct term* term;
 	char** exec;
 	struct mouse mouse;
+	screenshot_t* screenshot; /* from Print Screen, until it is read */
 };
 
 
@@ -735,6 +737,30 @@ static void term_esc_drmdropmaster(terminal_t* terminal, char* params)
 }
 
 /*
+ * Reply with the terminal's screenshot as "\e]screenshot:<len>;" and <len>
+ * bytes of PNG, or a <len> of 0 if there is none. It is only kept until it
+ * is read.
+ */
+static void term_esc_screenshot(terminal_t* terminal, char* params)
+{
+	screenshot_t* screenshot = terminal->screenshot;
+	char header[32];
+	int len;
+
+	len = snprintf(header, sizeof(header), "\033]screenshot:%zu;",
+		       screenshot ? screenshot->len : 0);
+	if (shl_pty_write(terminal->term->pty, header, len) < 0 ||
+	    (screenshot && shl_pty_write(terminal->term->pty,
+					 (char*)screenshot->data,
+					 screenshot->len) < 0))
+		LOG(ERROR, "OOM in pty-write");
+	shl_pty_dispatch(terminal->term->pty);
+
+	screenshot_destroy(screenshot);
+	terminal->screenshot = NULL;
+}
+
+/*
  * Assume all one or two digit sequences followed by ; are xterm OSC escapes.
  */
 static bool is_xterm_osc(char *osc)
@@ -789,6 +815,8 @@ static void term_osc_cb(struct tsm_vte *vte, const char *osc_string,
 		term_esc_keymap(terminal, osc + 7);
 	else if (strncmp(osc, "drmdropmaster", 13) == 0)
 		term_esc_drmdropmaster(terminal, osc + 13);
+	else if (strcmp(osc, "screenshot") == 0)
+		term_esc_screenshot(terminal, osc + 10);
 	else if (is_xterm_osc(osc))
 		; /* Ignore it. */
 	else
@@ -1074,6 +1102,8 @@ void term_close(terminal_t* term)
 		fb_close(term->fb);
 		term->fb = NULL;
 	}
+
+	screenshot_destroy(term->screenshot);
 
 	if (term->term) {
 		if (term->term->pty) {
@@ -1511,6 +1541,25 @@ void term_suspend_done(void* ignore)
 void term_input_enable(terminal_t* terminal, bool input_enable)
 {
 	terminal->input_enable = input_enable;
+}
+
+void term_screenshot(terminal_t* terminal)
+{
+	screenshot_t* screenshot;
+
+	if (!term_is_valid(terminal))
+		return;
+
+	screenshot = screenshot_capture(terminal->fb);
+	if (!screenshot) {
+		LOG(ERROR, "Failed to take a screenshot.");
+		return;
+	}
+
+	screenshot_destroy(terminal->screenshot);
+	terminal->screenshot = screenshot;
+	LOG(INFO, "Took a %zu byte screenshot of VT%u.", screenshot->len,
+	    terminal->vt);
 }
 
 void term_mouse_enable(terminal_t* terminal, bool enable)
