@@ -204,10 +204,17 @@ Example:
 printf "\033]keymap:layout=us,de;variant=,nodeadkeys;options=grp:alt_shift_toggle\a" > /run/frecon/current
 ```
 
+From a frecon terminal, `frectl` takes the layout, variant, and options like
+`setxkbmap`:
+
+```sh
+frectl set-keymap "us,de(nodeadkeys)" "" grp:alt_shift_toggle
+```
+
 ## Screenshots
 
 With `--enable-osc`, Print Screen captures the active terminal's screen as it
-is shown, including the text cursor, the selection and the mouse pointer, as a
+is shown, including the text cursor, the selection, and the mouse pointer, as a
 PNG.  The capture replaces any earlier one on that terminal, and is kept until
 a program on the same terminal reads it with the escape code:
 

@@ -13,7 +13,7 @@ import (
 
 const (
 	// frecon replies with replyPrefix, the length of the PNG in decimal,
-	// ';' and the PNG. A length of 0 means there is no screenshot.
+	// ';' and the PNG.  A length of 0 means there is no screenshot.
 	screenshotQuery = "\x1b]screenshot\x07"
 	replyPrefix     = "\x1b]screenshot:"
 
@@ -95,7 +95,7 @@ func makeRaw(tty *os.File) (func(), error) {
 }
 
 // readReplyHeader reads up to the ';' after the length, a byte at a time so
-// that keys typed after the reply are left for the next program. Keys typed
+// that keys typed after the reply are left for the next program.  Keys typed
 // before the reply are skipped.
 func readReplyHeader(r io.Reader) (int64, error) {
 	var b [1]byte

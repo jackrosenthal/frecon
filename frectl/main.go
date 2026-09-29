@@ -8,6 +8,7 @@ import (
 
 type cli struct {
 	SaveScreenshot saveScreenshotCmd `cmd:"" help:"Save the screenshot taken with Print Screen on this terminal as a PNG."`
+	SetKeymap      setKeymapCmd      `cmd:"" help:"Set frecon's keyboard layout, like setxkbmap.  Anything omitted uses the libxkbcommon default."`
 }
 
 func main() {
