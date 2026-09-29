@@ -148,7 +148,9 @@ bool dbus_init()
 			DBUS_NAME_FLAG_DO_NOT_QUEUE, &err);
 
 	if (result <= 0) {
-		LOG(ERROR, "Unable to get name for server");
+		LOG(ERROR, "Unable to get name for server: %s",
+		    dbus_error_is_set(&err) ? err.message : "unknown error");
+		dbus_error_free(&err);
 	}
 
 	stat = dbus_connection_register_object_path(new_dbus->conn,
