@@ -6,7 +6,7 @@ include common.mk
 
 FRECON_LITE ?= 0
 
-PC_DEPS = libdrm libpng libtsm
+PC_DEPS = libdrm libpng libtsm xkbcommon
 ifeq ($(FRECON_LITE),1)
 FRECON_OBJECTS = $(filter-out %_full.o,$(C_OBJECTS))
 CPPFLAGS += -DFRECON_LITE=1

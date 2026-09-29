@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/select.h>
 #include <unistd.h>
+#include <xkbcommon/xkbcommon.h>
 
 #include "dbus.h"
 #include "dbus_interface.h"
@@ -47,11 +48,16 @@ struct keyboard_state {
  *  ndevs - number of input devices.
  *  devs - input devices to listen to.
  *  kbd_state - tracks modifier keys that are pressed.
+ *  xkb_context, xkb_keymap, xkb_state - keyboard layout from
+ *    xkeyboard-config, or NULL to use the built-in US layout.
  */
 struct {
 	unsigned int ndevs;
 	struct input_dev* devs;
 	struct keyboard_state kbd_state;
+	struct xkb_context* xkb_context;
+	struct xkb_keymap* xkb_keymap;
+	struct xkb_state* xkb_state;
 } input = {
 	.ndevs = 0,
 	.devs = NULL,
@@ -331,6 +337,17 @@ static void input_get_keysym_and_unicode(struct input_key_event* event,
 		}
 	}
 
+	if (input.xkb_state) {
+		/* evdev keycodes are offset by 8 in xkb. */
+		xkb_keycode_t keycode = event->code + 8;
+
+		*keysym = xkb_state_key_get_one_sym(input.xkb_state, keycode);
+		*unicode = xkb_state_key_get_utf32(input.xkb_state, keycode);
+		if (!*unicode)
+			*unicode = -1;
+		return;
+	}
+
 	for (unsigned i = 0; i < ARRAY_SIZE(non_ascii_keys); i++) {
 		if (non_ascii_keys[i].code == event->code) {
 			*keysym = non_ascii_keys[i].keysym;
@@ -428,16 +445,62 @@ void input_remove(const char* devname)
 	}
 }
 
+/*
+ * Load the keyboard layout from xkeyboard-config. libxkbcommon picks the
+ * rules, model, layout, variant and options from the XKB_DEFAULT_RULES,
+ * XKB_DEFAULT_MODEL, XKB_DEFAULT_LAYOUT, XKB_DEFAULT_VARIANT and
+ * XKB_DEFAULT_OPTIONS environment variables, and the data directory from
+ * XKB_CONFIG_ROOT. On failure the built-in US layout is used.
+ */
+static void input_xkb_init(void)
+{
+	input.xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	if (!input.xkb_context) {
+		LOG(WARNING, "Failed to create xkb context, using built-in keymap");
+		return;
+	}
+
+	input.xkb_keymap = xkb_keymap_new_from_names(input.xkb_context, NULL,
+						     XKB_KEYMAP_COMPILE_NO_FLAGS);
+	if (!input.xkb_keymap) {
+		LOG(WARNING, "Failed to compile xkb keymap, using built-in keymap");
+		goto unref_context;
+	}
+
+	input.xkb_state = xkb_state_new(input.xkb_keymap);
+	if (!input.xkb_state) {
+		LOG(WARNING, "Failed to create xkb state, using built-in keymap");
+		goto unref_keymap;
+	}
+
+	return;
+
+unref_keymap:
+	xkb_keymap_unref(input.xkb_keymap);
+	input.xkb_keymap = NULL;
+unref_context:
+	xkb_context_unref(input.xkb_context);
+	input.xkb_context = NULL;
+}
+
 int input_init()
 {
 	if (!isatty(fileno(stdout)))
 		setbuf(stdout, NULL);
+	input_xkb_init();
 	return 0;
 }
 
 void input_close()
 {
 	unsigned int u;
+
+	xkb_state_unref(input.xkb_state);
+	input.xkb_state = NULL;
+	xkb_keymap_unref(input.xkb_keymap);
+	input.xkb_keymap = NULL;
+	xkb_context_unref(input.xkb_context);
+	input.xkb_context = NULL;
 
 	for (u = 0; u < input.ndevs; u++) {
 		free(input.devs[u].path);
@@ -529,6 +592,14 @@ void input_dispatch_io(fd_set* read_set, fd_set* exception_set)
 						keysym, unicode);
 			}
 		}
+		/*
+		 * Track modifiers and locks for every press and release,
+		 * including keys consumed above, so the xkb state stays in
+		 * sync. Autorepeat (value 2) does not change the state.
+		 */
+		if (input.xkb_state && event->value != 2)
+			xkb_state_update_key(input.xkb_state, event->code + 8,
+					     event->value ? XKB_KEY_DOWN : XKB_KEY_UP);
 		input_put_event(event);
 	}
 }
