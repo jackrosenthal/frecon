@@ -76,7 +76,7 @@ static void __attribute__ ((noreturn)) term_run_child(terminal_t* terminal)
 	}
 }
 
-static int term_draw_cell(struct tsm_screen* screen, uint32_t id,
+static int term_draw_cell(struct tsm_screen* screen, uint64_t id,
 			  const uint32_t* ch, size_t len,
 			  unsigned int cwidth, unsigned int posx,
 			  unsigned int posy,
@@ -349,7 +349,7 @@ static bool is_xterm_osc(char *osc)
 	return false;
 }
 
-static void term_osc_cb(struct tsm_vte *vte, const uint32_t *osc_string,
+static void term_osc_cb(struct tsm_vte *vte, const char *osc_string,
 			size_t osc_len, void *data)
 {
 	terminal_t* terminal = (terminal_t*)data;
@@ -357,7 +357,7 @@ static void term_osc_cb(struct tsm_vte *vte, const uint32_t *osc_string,
 	char *osc;
 
 	for (i = 0; i < osc_len; i++)
-		if (osc_string[i] >= 128)
+		if ((unsigned char)osc_string[i] >= 128)
 			return; /* we only want to deal with ASCII */
 
 	osc = malloc(osc_len + 1);
