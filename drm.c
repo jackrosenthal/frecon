@@ -938,7 +938,7 @@ static int remove_gamma_properties(drm_t* drm, uint32_t crtc_id) {
 int32_t drm_setmode(drm_t* drm, uint32_t fb_id)
 {
 	int conn;
-	int32_t ret;
+	int32_t ret = 0;
 	uint32_t existing_console_crtc_id = 0;
 
 	if (drm->atomic)

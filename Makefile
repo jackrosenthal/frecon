@@ -18,6 +18,8 @@ CPPFLAGS += -DFRECON_LITE=0
 TARGET ?= frecon
 endif
 
+# common.mk only sets PKG_CONFIG in its sub-make.
+PKG_CONFIG ?= pkg-config
 PC_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PC_DEPS))
 PC_LIBS := $(shell $(PKG_CONFIG) --libs $(PC_DEPS))
 

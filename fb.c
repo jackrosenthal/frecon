@@ -51,10 +51,13 @@ static int fb_buffer_create(fb_t* fb,
 
 	fb->lock.map_offset = map_dumb.offset;
 
-	uint32_t offset = 0;
+	/* drmModeAddFB2 reads all 4 planes. */
+	uint32_t handles[4] = { create_dumb.handle };
+	uint32_t pitches[4] = { create_dumb.pitch };
+	uint32_t offsets[4] = { 0 };
 	ret = drmModeAddFB2(fb->drm->fd, fb->drm->console_mode_info.hdisplay, fb->drm->console_mode_info.vdisplay,
-			    DRM_FORMAT_XRGB8888, &create_dumb.handle,
-			    &create_dumb.pitch, &offset, &fb->fb_id, 0);
+			    DRM_FORMAT_XRGB8888, handles,
+			    pitches, offsets, &fb->fb_id, 0);
 	if (ret) {
 		LOG(ERROR, "drmModeAddFB2 failed");
 		goto destroy_buffer;
@@ -161,7 +164,7 @@ static bool parse_edid_dtd_display_size(drm_t* drm, int32_t* hsize_mm, int32_t* 
 
 int fb_buffer_init(fb_t* fb)
 {
-	int32_t width, height, pitch;
+	int32_t width, height, pitch = 0;
 	int32_t hsize_mm, vsize_mm;
 	int r;
 
