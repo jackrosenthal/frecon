@@ -24,12 +24,29 @@ typedef struct {
 	uint32_t* map;
 } fb_lock_t;
 
+/*
+ * Mouse pointer state:
+ *  visible, x, y - the pointer is shown with its tip at x, y.
+ *  hw - the pointer is on the hardware cursor.
+ *  drawn, drawn_x, drawn_y, saved - the pointer is drawn into the buffer at
+ *    drawn_x, drawn_y, over the saved pixels.
+ */
+typedef struct {
+	bool visible;
+	int32_t x, y;
+	bool hw;
+	bool drawn;
+	int32_t drawn_x, drawn_y;
+	uint32_t* saved;
+} fb_pointer_t;
+
 typedef struct {
 	drm_t *drm;
 	buffer_properties_t buffer_properties;
 	fb_lock_t lock;
 	uint32_t buffer_handle;
 	uint32_t fb_id;
+	fb_pointer_t pointer;
 } fb_t;
 
 typedef struct {
@@ -53,6 +70,13 @@ int32_t fb_getwidth(fb_t* fb);
 int32_t fb_getheight(fb_t* fb);
 int32_t fb_getscaling(fb_t* fb);
 bool fb_stepper_init(fb_stepper_t *s, fb_t *fb, int32_t x, int32_t y, uint32_t width, uint32_t height);
+
+/*
+ * Show the mouse pointer with its tip at x, y, on the hardware cursor if
+ * possible and otherwise drawn into the buffer.
+ */
+void fb_pointer_show(fb_t* fb, int32_t x, int32_t y);
+void fb_pointer_hide(fb_t* fb);
 
 bool static inline fb_stepper_step_x(fb_stepper_t *s, uint32_t rgba)
 {

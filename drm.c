@@ -436,6 +436,19 @@ static void drm_clear_rmfb(drm_t* drm)
 	}
 }
 
+static void drm_cursor_destroy(drm_t* drm)
+{
+	struct drm_mode_destroy_dumb destroy_dumb;
+
+	if (!drm->cursor_handle)
+		return;
+
+	destroy_dumb.handle = drm->cursor_handle;
+	drmIoctl(drm->fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb);
+	drm->cursor_handle = 0;
+	drm->cursor_shown = false;
+}
+
 static void drm_fini(drm_t* drm)
 {
 	if (!drm)
@@ -443,6 +456,7 @@ static void drm_fini(drm_t* drm)
 
 	if (drm->fd >= 0) {
 		drm_clear_rmfb(drm);
+		drm_cursor_destroy(drm);
 
 		if (drm->plane_resources) {
 			drmModeFreePlaneResources(drm->plane_resources);
@@ -874,6 +888,9 @@ static int32_t drm_setmode_atomic(drm_t* drm, uint32_t fb_id)
 		/* LOG(INFO, "TIMING: Console switch atomic modeset finished."); */
 	} else {
 		ret = 0;
+		/* The cursor plane was disabled with the other planes. */
+		drm->console_crtc_id = console_crtc_id;
+		drm->cursor_shown = false;
 	}
 
 error_mode:
@@ -978,6 +995,8 @@ int32_t drm_setmode(drm_t* drm, uint32_t fb_id)
 				return ret;
 			}
 
+			drm->console_crtc_id = console_crtc_id;
+			drm->cursor_shown = false;
 			ret = drmModeSetCursor(drm->fd, console_crtc_id,
 						0, 0, 0);
 
@@ -1071,4 +1090,105 @@ uint32_t drm_gethres(drm_t* drm)
 uint32_t drm_getvres(drm_t* drm)
 {
 	return drm->console_mode_info.vdisplay;
+}
+
+void drm_cursor_size(drm_t* drm, uint32_t* width, uint32_t* height)
+{
+	uint64_t value;
+
+	if (!drm->cursor_width) {
+		drm->cursor_width = 64;
+		drm->cursor_height = 64;
+		if (!drmGetCap(drm->fd, DRM_CAP_CURSOR_WIDTH, &value) && value)
+			drm->cursor_width = value;
+		if (!drmGetCap(drm->fd, DRM_CAP_CURSOR_HEIGHT, &value) && value)
+			drm->cursor_height = value;
+	}
+
+	*width = drm->cursor_width;
+	*height = drm->cursor_height;
+}
+
+bool drm_cursor_has_image(drm_t* drm)
+{
+	return drm->cursor_handle != 0;
+}
+
+/*
+ * Returns false if the hardware cursor can't be used, and then it is not tried
+ * again.
+ */
+bool drm_cursor_set_image(drm_t* drm, const uint32_t* image)
+{
+	struct drm_mode_create_dumb create_dumb;
+	struct drm_mode_map_dumb map_dumb;
+	uint32_t width, height;
+	uint32_t* map;
+
+	if (drm->cursor_unsupported)
+		return false;
+
+	drm_cursor_destroy(drm);
+	drm_cursor_size(drm, &width, &height);
+
+	memset(&create_dumb, 0, sizeof(create_dumb));
+	create_dumb.width = width;
+	create_dumb.height = height;
+	create_dumb.bpp = 32;
+	if (drmIoctl(drm->fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_dumb))
+		goto unsupported;
+	drm->cursor_handle = create_dumb.handle;
+
+	/* The cursor ioctl assumes the rows are packed. */
+	if (create_dumb.pitch != width * 4)
+		goto unsupported;
+
+	memset(&map_dumb, 0, sizeof(map_dumb));
+	map_dumb.handle = create_dumb.handle;
+	if (drmIoctl(drm->fd, DRM_IOCTL_MODE_MAP_DUMB, &map_dumb))
+		goto unsupported;
+
+	map = mmap(0, create_dumb.size, PROT_READ | PROT_WRITE, MAP_SHARED,
+		   drm->fd, map_dumb.offset);
+	if (map == MAP_FAILED)
+		goto unsupported;
+	memcpy(map, image, width * height * 4);
+	munmap(map, create_dumb.size);
+
+	return true;
+
+unsupported:
+	LOG(WARNING, "Unable to create the hardware cursor, drawing the mouse pointer in software.");
+	drm_cursor_destroy(drm);
+	drm->cursor_unsupported = true;
+	return false;
+}
+
+bool drm_cursor_show(drm_t* drm, int32_t x, int32_t y)
+{
+	if (!drm->cursor_handle || !drm->console_crtc_id)
+		return false;
+
+	if (!drm->cursor_shown) {
+		if (drmModeSetCursor(drm->fd, drm->console_crtc_id,
+				     drm->cursor_handle, drm->cursor_width,
+				     drm->cursor_height)) {
+			LOG(WARNING, "Unable to show the hardware cursor, drawing the mouse pointer in software: %m");
+			drm_cursor_destroy(drm);
+			drm->cursor_unsupported = true;
+			return false;
+		}
+		drm->cursor_shown = true;
+	}
+
+	return drmModeMoveCursor(drm->fd, drm->console_crtc_id, x, y) == 0;
+}
+
+void drm_cursor_hide(drm_t* drm)
+{
+	if (!drm->cursor_shown)
+		return;
+
+	drmModeSetCursor(drm->fd, drm->console_crtc_id, 0, 0, 0);
+	drm->cursor_shown = false;
 }

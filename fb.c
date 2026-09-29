@@ -19,6 +19,36 @@
 #include "util.h"
 #include "fb.h"
 
+/*
+ * Mouse pointer arrow: top_left_arrow from the X cursor font, drawn over its
+ * mask. B is black, W is white, and the hotspot is the tip at 1, 1.
+ */
+#define POINTER_SIZE 16
+#define POINTER_HOT_X 1
+#define POINTER_HOT_Y 1
+#define POINTER_MAX_SCALE 4
+static const char pointer_arrow[POINTER_SIZE][POINTER_SIZE + 1] = {
+	"WWW             ",
+	"WBBWW           ",
+	"WBBBBWW         ",
+	" WBBBBBWW       ",
+	" WBBBBBBBWW     ",
+	"  WBBBBBBBBWWW  ",
+	"  WBBBBBBBBBBW  ",
+	"   WBBBBBWWWWW  ",
+	"   WBBBBBW      ",
+	"    WBBWWBW     ",
+	"    WBBW WBW    ",
+	"     WBW  WBW   ",
+	"     WBW   WBW  ",
+	"     WWW    WBW ",
+	"             WBW",
+	"              WW",
+};
+
+static void fb_pointer_erase(fb_t* fb);
+static void fb_pointer_draw(fb_t* fb);
+
 static int fb_buffer_create(fb_t* fb,
 			    int* pitch)
 {
@@ -95,6 +125,9 @@ void fb_buffer_destroy(fb_t* fb)
 	fb->buffer_handle = 0;
 	fb->lock.map = NULL;
 	fb->lock.count = 0;
+	/* The hardware cursor belongs to the drm, which may change. */
+	fb->pointer.drawn = false;
+	fb->pointer.hw = false;
 unref_drm:
 	if (fb->drm) {
 		drm_delref(fb->drm);
@@ -258,6 +291,7 @@ void fb_close(fb_t* fb)
 
 	fb_buffer_destroy(fb);
 
+	free(fb->pointer.saved);
 	free(fb);
 }
 
@@ -280,6 +314,8 @@ uint32_t* fb_lock(fb_t* fb)
 			LOG(ERROR, "mmap failed");
 			return NULL;
 		}
+		/* Draw under a software pointer, see fb_unlock(). */
+		fb_pointer_erase(fb);
 	}
 
 	if (fb->lock.map)
@@ -300,6 +336,8 @@ void fb_unlock(fb_t* fb)
 		struct drm_clip_rect clip_rect = {
 			0, 0, fb->buffer_properties.width, fb->buffer_properties.height
 		};
+		if (fb->pointer.visible && !fb->pointer.hw)
+			fb_pointer_draw(fb);
 		munmap(fb->lock.map, fb->buffer_properties.size);
 		ret = drmModeDirtyFB(fb->drm->fd, fb->fb_id, &clip_rect, 1);
 		if (ret) {
@@ -418,4 +456,179 @@ fb_stepper_init(fb_stepper_t *s, fb_t *fb, int32_t x, int32_t y, uint32_t width,
 	}
 
 	return true;
+}
+
+static int32_t fb_pointer_scale(fb_t* fb)
+{
+	return MAX(1, MIN(fb_getscaling(fb), POINTER_MAX_SCALE));
+}
+
+/* Color of pixel x, y of the arrow at scale, or 0 where it is transparent. */
+static uint32_t fb_pointer_color(int32_t x, int32_t y, int32_t scale)
+{
+	switch (pointer_arrow[y / scale][x / scale]) {
+	case 'B':
+		return 0xff000000;
+	case 'W':
+		return 0xffffffff;
+	default:
+		return 0;
+	}
+}
+
+/*
+ * Draw the arrow with its hotspot at x, y into the locked buffer and save the
+ * pixels under it, or put the saved pixels back if restore is set.
+ */
+static void fb_pointer_blit(fb_t* fb, int32_t x, int32_t y, bool restore)
+{
+	fb_pointer_t* p = &fb->pointer;
+	int32_t scale = fb_pointer_scale(fb);
+	int32_t size = POINTER_SIZE * scale;
+	fb_stepper_t s;
+
+	if (!fb_stepper_init(&s, fb, 0, 0, 1, 1))
+		return;
+
+	for (int32_t iy = 0; iy < size; iy++) {
+		for (int32_t ix = 0; ix < size; ix++) {
+			uint32_t color = fb_pointer_color(ix, iy, scale);
+			int32_t px = x + ix - POINTER_HOT_X * scale;
+			int32_t py = y + iy - POINTER_HOT_Y * scale;
+			uint32_t* pixel;
+
+			if (!color || px < 0 || py < 0 ||
+			    px >= s.max_x || py >= s.max_y)
+				continue;
+
+			pixel = &fb->lock.map[
+				(px * s.m[0][0] + py * s.m[0][1] + s.m[0][2]) +
+				(px * s.m[1][0] + py * s.m[1][1] + s.m[1][2]) *
+				s.pitch_div_4];
+			if (restore) {
+				*pixel = p->saved[iy * size + ix];
+			} else {
+				p->saved[iy * size + ix] = *pixel;
+				*pixel = color;
+			}
+		}
+	}
+}
+
+static void fb_pointer_draw(fb_t* fb)
+{
+	fb_pointer_t* p = &fb->pointer;
+	int32_t max_size = POINTER_SIZE * POINTER_MAX_SCALE;
+
+	if (!p->saved) {
+		p->saved = malloc(max_size * max_size * sizeof(*p->saved));
+		if (!p->saved)
+			return;
+	}
+
+	fb_pointer_blit(fb, p->x, p->y, false);
+	p->drawn = true;
+	p->drawn_x = p->x;
+	p->drawn_y = p->y;
+}
+
+static void fb_pointer_erase(fb_t* fb)
+{
+	fb_pointer_t* p = &fb->pointer;
+
+	if (!p->drawn)
+		return;
+
+	fb_pointer_blit(fb, p->drawn_x, p->drawn_y, true);
+	p->drawn = false;
+}
+
+/*
+ * Show the pointer on the hardware cursor. The image is rotated like the
+ * screen, so the cursor position is that of the rotated image's top left
+ * corner in the unrotated buffer.
+ */
+static bool fb_pointer_show_hw(fb_t* fb)
+{
+	fb_pointer_t* p = &fb->pointer;
+	drm_t* drm = fb->drm;
+	uint32_t width, height;
+	int32_t scale, size, min_x, min_y, x, y;
+	fb_stepper_t s;
+
+	if (!drm_valid(drm) || drm->cursor_unsupported)
+		return false;
+	if (!fb_stepper_init(&s, fb, 0, 0, 1, 1))
+		return false;
+
+	drm_cursor_size(drm, &width, &height);
+	scale = fb_pointer_scale(fb);
+	while (scale > 1 && POINTER_SIZE * scale > (int32_t)MIN(width, height))
+		scale--;
+	size = POINTER_SIZE * scale;
+	if (size > (int32_t)MIN(width, height))
+		return false;
+
+	min_x = MIN(0, s.m[0][0] * (size - 1)) + MIN(0, s.m[0][1] * (size - 1));
+	min_y = MIN(0, s.m[1][0] * (size - 1)) + MIN(0, s.m[1][1] * (size - 1));
+
+	if (!drm_cursor_has_image(drm)) {
+		uint32_t* image = calloc(width * height, sizeof(*image));
+		bool ok;
+
+		if (!image)
+			return false;
+
+		for (int32_t iy = 0; iy < size; iy++) {
+			for (int32_t ix = 0; ix < size; ix++) {
+				int32_t px = ix * s.m[0][0] + iy * s.m[0][1] - min_x;
+				int32_t py = ix * s.m[1][0] + iy * s.m[1][1] - min_y;
+
+				image[py * width + px] =
+					fb_pointer_color(ix, iy, scale);
+			}
+		}
+
+		ok = drm_cursor_set_image(drm, image);
+		free(image);
+		if (!ok)
+			return false;
+	}
+
+	x = p->x - POINTER_HOT_X * scale;
+	y = p->y - POINTER_HOT_Y * scale;
+	return drm_cursor_show(drm,
+			       x * s.m[0][0] + y * s.m[0][1] + s.m[0][2] + min_x,
+			       x * s.m[1][0] + y * s.m[1][1] + s.m[1][2] + min_y);
+}
+
+void fb_pointer_show(fb_t* fb, int32_t x, int32_t y)
+{
+	fb_pointer_t* p = &fb->pointer;
+
+	p->visible = true;
+	p->x = x;
+	p->y = y;
+	p->hw = fb_pointer_show_hw(fb);
+
+	/* Locking erases the software pointer and unlocking redraws it. */
+	if (!p->hw || p->drawn) {
+		if (fb_lock(fb))
+			fb_unlock(fb);
+	}
+}
+
+void fb_pointer_hide(fb_t* fb)
+{
+	fb_pointer_t* p = &fb->pointer;
+
+	p->visible = false;
+	if (p->hw) {
+		drm_cursor_hide(fb->drm);
+		p->hw = false;
+	}
+	if (p->drawn) {
+		if (fb_lock(fb))
+			fb_unlock(fb);
+	}
 }

@@ -34,6 +34,7 @@ splash_t* splash;
 
 #define  FLAG_CLEAR                        'c'
 #define  FLAG_DAEMON                       'd'
+#define  FLAG_ENABLE_MOUSE                 'M'
 #define  FLAG_ENABLE_OSC                   'G'
 #define  FLAG_ENABLE_VT1                   '1'
 #define  FLAG_ENABLE_VTS                   'e'
@@ -61,6 +62,7 @@ static const struct option command_options[] = {
 	{ "daemon", no_argument, NULL, FLAG_DAEMON },
 	{ "dev-mode", no_argument, NULL, FLAG_ENABLE_VTS },
 	{ "enable-gfx", no_argument, NULL, FLAG_ENABLE_OSC },
+	{ "enable-mouse", no_argument, NULL, FLAG_ENABLE_MOUSE },
 	{ "enable-osc", no_argument, NULL, FLAG_ENABLE_OSC },
 	{ "enable-vt1", no_argument, NULL, FLAG_ENABLE_VT1 },
 	{ "enable-vts", no_argument, NULL, FLAG_ENABLE_VTS },
@@ -89,6 +91,7 @@ static const char * const command_help[] = {
 	"Daemonize frecon.",
 	"Force dev mode behavior (deprecated, use --enable-vts).",
 	"Enable image and box drawing OSC escape codes (deprecated, use --enable-osc).",
+	"Enable mouse text selection, paste, and scrolling.",
 	"Enable OSC escape codes for graphics and input control.",
 	"Enable switching to VT1 and keep a terminal on it.",
 	"Enable additional terminals beyond VT1.",
@@ -193,6 +196,7 @@ int main_process_events(uint32_t usec)
 	input_add_fds(&read_set, &exception_set, &maxfd);
 	vt_add_fds(&read_set, &exception_set, &maxfd);
 	dev_add_fds(&read_set, &exception_set, &maxfd);
+	term_pointer_add_fds(&read_set, &exception_set, &maxfd);
 
 	for (unsigned i = 0; i < term_num_terminals; i++) {
 		terminal_t* current_term = term_get_terminal(i);
@@ -221,6 +225,7 @@ int main_process_events(uint32_t usec)
 
 	dev_dispatch_io(&read_set, &exception_set);
 	input_dispatch_io(&read_set, &exception_set);
+	term_pointer_dispatch_io(&read_set);
 
 	for (unsigned i = 0; i < term_num_terminals; i++) {
 		terminal_t* current_term = term_get_terminal(i);
@@ -377,6 +382,10 @@ int main(int argc, char* argv[])
 		switch (c) {
 			case FLAG_DAEMON:
 				command_flags.daemon = true;
+				break;
+
+			case FLAG_ENABLE_MOUSE:
+				command_flags.enable_mouse = true;
 				break;
 
 			case FLAG_ENABLE_OSC:

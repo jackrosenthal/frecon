@@ -30,6 +30,8 @@ integer in a framebuffer format (ARGB) in any format supported by strtoul.
 	Daemonize frecon.
 * `--enable-gfx`
 	Enable image and box drawing OSC escape codes.
+* `--enable-mouse`
+	Enable the mouse on all terminals.  See [Mouse](#mouse).
 * `--enable-vts`
 	Enable additional terminals in addition to splash screen.
 * `--enable-vt1`
@@ -131,6 +133,38 @@ Examples:
 ```sh
 printf "\033]input:on\a" > /run/frecon/vt0
 printf "\033]input:off\a" > /run/frecon/vt1
+```
+
+## Mouse
+
+With the mouse enabled, frecon shows a pointer when the mouse is used, and
+hides it after 5 seconds without mouse activity.  Mice, touchpads,
+touchscreens, and tablets are supported:
+
+* Left button: drag to select text, double click to select a word, and triple
+  click to select a line.  The selection is copied when the button is released.
+* Middle button: paste the last selection.  It is shared by all terminals.
+* Right button: extend the selection to the pointer.
+* Wheel, or two fingers on a touchpad: scroll the scrollback.  On the alternate
+  screen, used by full screen programs such as `less`, the Up and Down arrow
+  keys are sent instead.
+
+When the program in the terminal requests mouse events (xterm mouse tracking),
+they are sent to the program instead.  Hold Shift to select, paste, and scroll
+anyway.
+
+The mouse is enabled on all terminals with `--enable-mouse`, or on one
+terminal with an escape code.  The mouse escape code does not require
+`--enable-osc`.
+
+`mouse:onoff`
+
+* where `onoff` is one of: on,1,true or off,0,false
+
+Examples:
+```sh
+printf "\033]mouse:on\a"
+printf "\033]mouse:off\a" > /run/frecon/vt1
 ```
 
 ## SwitchVT escape code

@@ -23,6 +23,7 @@ typedef struct {
 	bool    enable_vt1;
 	bool    splash_only;
 	bool    enable_osc;
+	bool    enable_mouse;
 	bool    no_login;
 	bool    pre_create_vts;
 	bool    wait_drop_master;

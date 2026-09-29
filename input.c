@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <libtsm.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,10 +29,39 @@ struct input_key_event {
 	unsigned char value;
 };
 
+/*
+ * Pointer state of an input device, applied to the pointer on each SYN_REPORT:
+ *  absolute - the device reports ABS_X/ABS_Y positions.
+ *  touchpad - the positions are a finger moving the pointer relatively.
+ *  abs_x, abs_y - range of the positions.
+ *  x, y, abs_changed - latest position, and whether it changed.
+ *  last_x, last_y, tracking - touchpad position at the previous report, if
+ *    the same fingers were down.
+ *  fingers - number of fingers on the touchpad.
+ *  frac_x, frac_y, scroll - touchpad motion not yet applied.
+ *  rel_x, rel_y, wheel - relative motion since the previous report.
+ */
+struct input_pointer {
+	bool absolute;
+	bool touchpad;
+	struct input_absinfo abs_x, abs_y;
+	int32_t x, y;
+	bool abs_changed;
+	int32_t last_x, last_y;
+	bool tracking;
+	unsigned int fingers;
+	int64_t frac_x, frac_y;
+	int32_t scroll;
+	int32_t rel_x, rel_y, wheel;
+};
+
 struct input_dev {
 	int fd;
 	char* path;
+	struct input_pointer pointer;
 };
+
+static void input_pointer_init(struct input_dev* dev);
 
 struct keyboard_state {
 	bool left_shift_state;
@@ -83,28 +113,7 @@ static int input_special_key(struct input_key_event* ev)
 {
 	terminal_t* terminal;
 
-	uint32_t ignore_keys[] = {
-		BTN_TOUCH, // touchpad events
-		BTN_TOOL_FINGER,
-		BTN_TOOL_DOUBLETAP,
-		BTN_TOOL_TRIPLETAP,
-		BTN_TOOL_QUADTAP,
-		BTN_TOOL_QUINTTAP,
-		BTN_LEFT, // mouse buttons
-		BTN_RIGHT,
-		BTN_MIDDLE,
-		BTN_SIDE,
-		BTN_EXTRA,
-		BTN_FORWARD,
-		BTN_BACK,
-		BTN_TASK
-	};
-
 	terminal = term_get_current_terminal();
-
-	for (unsigned int i = 0; i < ARRAY_SIZE(ignore_keys); i++)
-		if (ev->code == ignore_keys[i])
-			return 1;
 
 	switch (ev->code) {
 	case KEY_LEFTSHIFT:
@@ -409,12 +418,14 @@ int input_add(const char* devname)
 		goto closefd;
 	}
 	input.devs = newdevs;
+	memset(&input.devs[input.ndevs], 0, sizeof(input.devs[input.ndevs]));
 	input.devs[input.ndevs].fd = fd;
 	input.devs[input.ndevs].path = strdup(devname);
 	if (!input.devs[input.ndevs].path) {
 		ret = -ENOMEM;
 		goto closefd;
 	}
+	input_pointer_init(&input.devs[input.ndevs]);
 	input.ndevs++;
 
 	return fd;
@@ -523,18 +534,263 @@ void input_add_fds(fd_set* read_set, fd_set* exception_set, int *maxfd)
 	}
 }
 
-struct input_key_event* input_get_event(fd_set* read_set,
-					fd_set* exception_set)
+static void input_key(struct input_key_event* event)
+{
+	terminal_t* terminal;
+
+	if (!input_special_key(event) && event->value) {
+		uint32_t keysym, unicode;
+		// current_terminal can possibly change during
+		// execution of input_special_key
+		terminal = term_get_current_terminal();
+		if (term_is_active(terminal)) {
+			// Only report user activity when the terminal is active
+			dbus_report_user_activity(USER_ACTIVITY_OTHER);
+			input_get_keysym_and_unicode(
+				event, &keysym, &unicode);
+			term_key_event(terminal,
+					keysym, unicode);
+		}
+	}
+	/*
+	 * Track modifiers and locks for every press and release,
+	 * including keys consumed above, so the xkb state stays in
+	 * sync. Autorepeat (value 2) does not change the state.
+	 */
+	if (input.xkb_state && event->value != 2)
+		xkb_state_update_key(input.xkb_state, event->code + 8,
+				     event->value ? XKB_KEY_DOWN : XKB_KEY_UP);
+}
+
+static bool is_pointer_key(uint16_t code)
+{
+	uint16_t pointer_keys[] = {
+		BTN_TOUCH, // touchpad events
+		BTN_TOOL_FINGER,
+		BTN_TOOL_DOUBLETAP,
+		BTN_TOOL_TRIPLETAP,
+		BTN_TOOL_QUADTAP,
+		BTN_TOOL_QUINTTAP,
+		BTN_LEFT, // mouse buttons
+		BTN_RIGHT,
+		BTN_MIDDLE,
+		BTN_SIDE,
+		BTN_EXTRA,
+		BTN_FORWARD,
+		BTN_BACK,
+		BTN_TASK
+	};
+
+	for (unsigned int i = 0; i < ARRAY_SIZE(pointer_keys); i++)
+		if (code == pointer_keys[i])
+			return true;
+
+	return false;
+}
+
+static unsigned int input_mouse_modifiers(void)
+{
+	unsigned int mods = 0;
+
+	if (is_shift_pressed(&input.kbd_state))
+		mods |= TSM_MOUSE_MODIFIER_SHIFT;
+	if (is_alt_pressed(&input.kbd_state))
+		mods |= TSM_MOUSE_MODIFIER_META;
+	if (is_control_pressed(&input.kbd_state))
+		mods |= TSM_MOUSE_MODIFIER_CTRL;
+
+	return mods;
+}
+
+/*
+ * Touchpad motion: one finger moves the pointer, with the width of the
+ * touchpad scaled to the width of the screen, and two fingers scroll.
+ */
+static void input_touchpad_motion(struct input_pointer* p, fb_t* fb)
+{
+	int32_t range_x = p->abs_x.maximum - p->abs_x.minimum;
+	int32_t range_y = p->abs_y.maximum - p->abs_y.minimum;
+	/* Touchpad units to scroll one wheel notch. */
+	int32_t scroll_step = MAX(range_y / 20, 1);
+
+	if (p->tracking && p->fingers == 1) {
+		p->frac_x += (int64_t)(p->x - p->last_x) * fb_getwidth(fb);
+		p->frac_y += (int64_t)(p->y - p->last_y) * fb_getwidth(fb);
+		p->rel_x += p->frac_x / range_x;
+		p->rel_y += p->frac_y / range_x;
+		p->frac_x %= range_x;
+		p->frac_y %= range_x;
+	} else if (p->tracking && p->fingers == 2) {
+		/* Moving the fingers down scrolls down, like the wheel. */
+		p->scroll += p->y - p->last_y;
+		p->wheel -= p->scroll / scroll_step;
+		p->scroll %= scroll_step;
+	}
+
+	if (!p->tracking) {
+		p->frac_x = p->frac_y = 0;
+		p->scroll = 0;
+	}
+
+	p->last_x = p->x;
+	p->last_y = p->y;
+	p->tracking = p->fingers > 0;
+}
+
+/* Apply the motion of a device since the previous report to the pointer. */
+static void input_pointer_report(struct input_pointer* p)
+{
+	terminal_t* terminal = term_get_current_terminal();
+	unsigned int mods = input_mouse_modifiers();
+
+	if (!p->abs_changed && !p->rel_x && !p->rel_y && !p->wheel)
+		return;
+
+	if (term_is_active(terminal) && p->abs_changed) {
+		fb_t* fb = term_getfb(terminal);
+
+		if (p->touchpad) {
+			input_touchpad_motion(p, fb);
+		} else {
+			int64_t x = p->x - p->abs_x.minimum;
+			int64_t y = p->y - p->abs_y.minimum;
+
+			term_mouse_move_to(terminal,
+				x * (fb_getwidth(fb) - 1) /
+				(p->abs_x.maximum - p->abs_x.minimum),
+				y * (fb_getheight(fb) - 1) /
+				(p->abs_y.maximum - p->abs_y.minimum),
+				mods);
+		}
+	} else if (p->abs_changed) {
+		p->tracking = false;
+	}
+
+	if (term_is_active(terminal)) {
+		if (p->rel_x || p->rel_y)
+			term_mouse_move(terminal, p->rel_x, p->rel_y, mods);
+		if (p->wheel)
+			term_mouse_wheel(terminal, p->wheel, mods);
+	}
+
+	p->abs_changed = false;
+	p->rel_x = p->rel_y = p->wheel = 0;
+}
+
+static void input_pointer_button(struct input_pointer* p, uint16_t code,
+				 int32_t value)
+{
+	terminal_t* terminal;
+	unsigned int button;
+
+	switch (code) {
+	case BTN_TOOL_FINGER:
+	case BTN_TOOL_DOUBLETAP:
+	case BTN_TOOL_TRIPLETAP:
+	case BTN_TOOL_QUADTAP:
+	case BTN_TOOL_QUINTTAP: {
+		unsigned int fingers = (code == BTN_TOOL_FINGER) ? 1 :
+				       code - BTN_TOOL_DOUBLETAP + 2;
+		if (value)
+			p->fingers = fingers;
+		else if (p->fingers == fingers)
+			p->fingers = 0;
+		/* The position jumps when the fingers change. */
+		p->tracking = false;
+		return;
+	}
+	case BTN_TOUCH:
+		/* A touch on a touchscreen or tablet is a left click. */
+		if (p->touchpad)
+			return;
+		button = TSM_MOUSE_BUTTON_LEFT;
+		break;
+	case BTN_LEFT:
+		button = TSM_MOUSE_BUTTON_LEFT;
+		break;
+	case BTN_MIDDLE:
+		button = TSM_MOUSE_BUTTON_MIDDLE;
+		break;
+	case BTN_RIGHT:
+		button = TSM_MOUSE_BUTTON_RIGHT;
+		break;
+	default:
+		return;
+	}
+
+	/* Press or release where the pointer is in this report. */
+	input_pointer_report(p);
+
+	terminal = term_get_current_terminal();
+	if (term_is_active(terminal))
+		term_mouse_button(terminal, button, value,
+				  input_mouse_modifiers());
+}
+
+static void input_pointer_event(struct input_pointer* p,
+				struct input_event* ev)
+{
+	switch (ev->type) {
+	case EV_KEY:
+		input_pointer_button(p, ev->code, ev->value);
+		break;
+	case EV_REL:
+		if (ev->code == REL_X)
+			p->rel_x += ev->value;
+		else if (ev->code == REL_Y)
+			p->rel_y += ev->value;
+		else if (ev->code == REL_WHEEL)
+			p->wheel += ev->value;
+		break;
+	case EV_ABS:
+		if (!p->absolute)
+			break;
+		if (ev->code == ABS_X) {
+			p->x = ev->value;
+			p->abs_changed = true;
+		} else if (ev->code == ABS_Y) {
+			p->y = ev->value;
+			p->abs_changed = true;
+		}
+		break;
+	case EV_SYN:
+		if (ev->code == SYN_REPORT) {
+			input_pointer_report(p);
+		} else if (ev->code == SYN_DROPPED) {
+			p->abs_changed = false;
+			p->tracking = false;
+			p->rel_x = p->rel_y = p->wheel = 0;
+		}
+		break;
+	}
+}
+
+static void input_event(struct input_dev* dev, struct input_event* ev)
+{
+	if (ev->type == EV_KEY && !is_pointer_key(ev->code)) {
+		struct input_key_event event = {
+			.code = ev->code,
+			.value = ev->value,
+		};
+		input_key(&event);
+	} else if (ev->type == EV_SW && ev->code == SW_LID) {
+		/* TODO(dbehr), abstract this in input_key_event if we ever parse more than one */
+		term_monitor_hotplug();
+	} else {
+		input_pointer_event(&dev->pointer, ev);
+	}
+}
+
+void input_dispatch_io(fd_set* read_set, fd_set* exception_set)
 {
 	unsigned int u;
-	struct input_event ev;
+	struct input_event evs[64];
 	int ret;
 
 	for (u = 0; u < input.ndevs; u++) {
 		if (FD_ISSET(input.devs[u].fd, read_set)
 		    && !FD_ISSET(input.devs[u].fd, exception_set)) {
-			ret =
-			    read(input.devs[u].fd, &ev, sizeof (struct input_event));
+			ret = read(input.devs[u].fd, evs, sizeof(evs));
 			if (ret < 0) {
 				if (errno == EINTR || errno == EAGAIN)
 					continue;
@@ -543,64 +799,16 @@ struct input_key_event* input_get_event(fd_set* read_set,
 						strerror(errno));
 				}
 				input_remove(input.devs[u].path);
-				return NULL;
+				return;
 			} else if (ret < (int) sizeof (struct input_event)) {
 				LOG(ERROR, "expected %d bytes, got %d",
 				       (int) sizeof (struct input_event), ret);
-				return NULL;
+				return;
 			}
 
-			if (ev.type == EV_KEY) {
-				struct input_key_event* event =
-				    malloc(sizeof (*event));
-				event->code = ev.code;
-				event->value = ev.value;
-				return event;
-			} else if (ev.type == EV_SW && ev.code == SW_LID) {
-				/* TODO(dbehr), abstract this in input_key_event if we ever parse more than one */
-				term_monitor_hotplug();
-			}
+			for (int i = 0; i < ret / (int) sizeof(evs[0]); i++)
+				input_event(&input.devs[u], &evs[i]);
 		}
-	}
-
-	return NULL;
-}
-
-void input_put_event(struct input_key_event* event)
-{
-	free(event);
-}
-
-void input_dispatch_io(fd_set* read_set, fd_set* exception_set)
-{
-	terminal_t* terminal;
-	struct input_key_event* event;
-
-	event = input_get_event(read_set, exception_set);
-	if (event) {
-		if (!input_special_key(event) && event->value) {
-			uint32_t keysym, unicode;
-			// current_terminal can possibly change during
-			// execution of input_special_key
-			terminal = term_get_current_terminal();
-			if (term_is_active(terminal)) {
-				// Only report user activity when the terminal is active
-				dbus_report_user_activity(USER_ACTIVITY_OTHER);
-				input_get_keysym_and_unicode(
-					event, &keysym, &unicode);
-				term_key_event(terminal,
-						keysym, unicode);
-			}
-		}
-		/*
-		 * Track modifiers and locks for every press and release,
-		 * including keys consumed above, so the xkb state stays in
-		 * sync. Autorepeat (value 2) does not change the state.
-		 */
-		if (input.xkb_state && event->value != 2)
-			xkb_state_update_key(input.xkb_state, event->code + 8,
-					     event->value ? XKB_KEY_DOWN : XKB_KEY_UP);
-		input_put_event(event);
 	}
 }
 
@@ -634,6 +842,46 @@ static int get_switch_bit(int fd, int bit) {
 static bool is_lid_switch(int fd)
 {
 	return has_event_bit(fd, 0, EV_SW) && has_event_bit(fd, EV_SW, SW_LID);
+}
+
+static bool has_property(int fd, int prop)
+{
+	unsigned long bitmask[BITS_TO_LONGS(INPUT_PROP_MAX+1)];
+	memset(bitmask, 0, sizeof(bitmask));
+
+	if (ioctl(fd, EVIOCGPROP(sizeof(bitmask)), bitmask) < 0)
+		return false;
+
+	return BITMASK_GET_BIT(bitmask, prop);
+}
+
+/*
+ * Find out whether the device reports absolute positions. Joysticks and
+ * accelerometers also have ABS_X/ABS_Y, so require a touch or a button.
+ */
+static void input_pointer_init(struct input_dev* dev)
+{
+	struct input_pointer* p = &dev->pointer;
+	int fd = dev->fd;
+
+	if (!has_event_bit(fd, EV_ABS, ABS_X) ||
+	    !has_event_bit(fd, EV_ABS, ABS_Y))
+		return;
+	if (!has_event_bit(fd, EV_KEY, BTN_TOUCH) &&
+	    !has_event_bit(fd, EV_KEY, BTN_LEFT))
+		return;
+	if (ioctl(fd, EVIOCGABS(ABS_X), &p->abs_x) < 0 ||
+	    ioctl(fd, EVIOCGABS(ABS_Y), &p->abs_y) < 0)
+		return;
+	if (p->abs_x.maximum <= p->abs_x.minimum ||
+	    p->abs_y.maximum <= p->abs_y.minimum)
+		return;
+
+	p->absolute = true;
+	p->touchpad = !has_property(fd, INPUT_PROP_DIRECT) &&
+		      has_event_bit(fd, EV_KEY, BTN_TOOL_FINGER);
+	p->x = p->abs_x.value;
+	p->y = p->abs_y.value;
 }
 
 int input_check_lid_state(void)

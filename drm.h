@@ -55,6 +55,11 @@ typedef struct _drm_t {
 	uint32_t delayed_rmfb_fb_id;
 	bool atomic;
 	int32_t panel_orientation; // DRM_PANEL_ORIENTATION_*
+	uint32_t console_crtc_id; // set by the last mode set
+	uint32_t cursor_width, cursor_height;
+	uint32_t cursor_handle;
+	bool cursor_shown;
+	bool cursor_unsupported;
 } drm_t;
 
 drm_t* drm_scan(void);
@@ -71,5 +76,16 @@ void drm_rmfb(drm_t* drm, uint32_t fb_id);
 bool drm_read_edid(drm_t* drm);
 uint32_t drm_gethres(drm_t* drm);
 uint32_t drm_getvres(drm_t* drm);
+
+/*
+ * Hardware cursor on the console CRTC. The image is ARGB8888 of the size from
+ * drm_cursor_size(), and positions are of its top left corner. A mode set
+ * hides the cursor.
+ */
+void drm_cursor_size(drm_t* drm, uint32_t* width, uint32_t* height);
+bool drm_cursor_has_image(drm_t* drm);
+bool drm_cursor_set_image(drm_t* drm, const uint32_t* image);
+bool drm_cursor_show(drm_t* drm, int32_t x, int32_t y);
+void drm_cursor_hide(drm_t* drm);
 
 #endif

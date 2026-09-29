@@ -72,4 +72,20 @@ void term_background(bool onetry);
 void term_foreground(void);
 void term_suspend_done(void*);
 void term_input_enable(terminal_t* terminal, bool input_enable);
+
+/*
+ * Mouse support. Buttons, events, and modifiers are TSM_MOUSE_*, positions are
+ * in pixels.
+ */
+void term_mouse_enable(terminal_t* terminal, bool enable);
+void term_mouse_move(terminal_t* terminal, int32_t dx, int32_t dy,
+		     unsigned int mods);
+void term_mouse_move_to(terminal_t* terminal, int32_t x, int32_t y,
+			unsigned int mods);
+void term_mouse_button(terminal_t* terminal, unsigned int button,
+		       bool pressed, unsigned int mods);
+void term_mouse_wheel(terminal_t* terminal, int32_t notches, unsigned int mods);
+/* Timer that hides the pointer when the mouse is idle. */
+void term_pointer_add_fds(fd_set* read_set, fd_set* exception_set, int* maxfd);
+void term_pointer_dispatch_io(fd_set* read_set);
 #endif
